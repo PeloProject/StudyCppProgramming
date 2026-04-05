@@ -22,6 +22,11 @@ npm install
 npm run dev
 ```
 
+または、OSごとの起動スクリプトを実行できます。
+
+- Windows: `run.bat`
+- macOS: `run.command`
+
 ## 技術構成
 
 - **Frontend**: React 19, Vite, TypeScript, Tailwind CSS

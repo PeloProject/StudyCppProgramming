@@ -24,6 +24,8 @@ npm run dev
 
 または、ルートディレクトリにある `run.bat` をダブルクリックして起動することもできます（Windows環境）。このバッチファイルは、`node_modules` が存在しない場合に自動的に `npm install` も実行します。
 
+macOS の場合は、ルートディレクトリにある `run.command` をダブルクリックして起動できます。`run.command` も `node_modules` が存在しない場合に自動的に `npm install` を実行します。
+
 起動後、ブラウザで `http://localhost:5173` （またはターミナルに表示されたURL）にアクセスしてください。
 
 ## 主な機能

@@ -4514,7 +4514,7 @@ int main() { return 0; }
   {
     id: "game-handle-system",
     category: "Game Programming",
-    title: "36. ハンドルによるオブジェクト管理 (Handle System)",
+    title: "1. ハンドルによるオブジェクト管理 (Handle System)",
     description: "ゲームエンジンでは、メモリの断片化の回避や、オブジェクトの破棄を安全に扱うために、生のポインタの代わりに「ハンドル（数値ID）」を使用してオブジェクトを管理することがよくあります。これにより、ポインタが指す先のオブジェクトが既に破棄されている（ダングリングポインタ）状態を検知しやすくなります。",
     task: "`Handle` 構造体を受け取って、対応する `Actor` ポインタを返す `resolveHandle(Handle handle)` 関数を実装してください。IDが範囲外の場合は `nullptr` を返してください。",
     initialCode: `#include <iostream>
@@ -4594,7 +4594,7 @@ int main() {
   {
     id: "game-placement-new",
     category: "Game Programming",
-    title: "37. Placement New によるメモリ管理 (Placement New)",
+    title: "2. Placement New によるメモリ管理 (Placement New)",
     description: "パフォーマンスが極めて重要なゲーム開発では、`new` による動的メモリ確保のオーバーヘッドとフラグメンテーションを抑えるため、事前に確保されたメモリブロック上にオブジェクトを構築する `placement new`（配置new）が利用されます。",
     task: "あらかじめ用意されたバッファ `buffer` 上に、`placement new` を用いて `Actor` オブジェクトを構築してください。構築されたオブジェクトのポインタを `actor` 変数に代入してください。",
     initialCode: `#include <iostream>
@@ -4652,7 +4652,7 @@ int main() {
   {
     id: "game-abstract-interface",
     category: "Game Programming",
-    title: "38. 抽象インターフェイスによる描画系の抽象化 (Abstract Interface)",
+    title: "3. 抽象インターフェイスによる描画系の抽象化 (Abstract Interface)",
     description: "異なるプラットフォームや描画API（DirectX, OpenGL, Vulkan等）に対応するため、ゲームエンジンでは抽象インターフェイスを介して描画命令を発行します。これにより、上位のロジックを変更することなく、描画システムを差し替えることが可能になります。",
     task: "`IRenderer` インターフェイスを継承した `VulkanRenderer` クラスを実装してください。`render` メソッド内で \"Vulkan Rendering\" と出力してください。",
     initialCode: `#include <iostream>
@@ -4715,7 +4715,7 @@ public:
   {
     id: "game-object-factory",
     category: "Game Programming",
-    title: "39. 簡単なオブジェクトファクトリ (Object Factory)",
+    title: "4. 簡単なオブジェクトファクトリ (Object Factory)",
     description: "ゲーム中に動的に多種多様なオブジェクトを生成する場合、生成ロジックを1か所にまとめる「ファクトリ」パターンが便利です。特にシリアライズされたデータからオブジェクトを復元する際に重要になります。",
     task: "文字列引数を受け取り、\"Warrior\" なら `Warrior` クラス、\"Mage\" なら `Mage` クラスのインスタンスを生成して返す `ActorFactory::createActor` を実装してください。",
     initialCode: `#include <iostream>
@@ -4781,7 +4781,7 @@ int main() {
   {
     id: "game-class-lifecycle",
     category: "Game Programming",
-    title: "40. クラスのライフサイクル (Class Lifecycle)",
+    title: "5. クラスのライフサイクル (Class Lifecycle)",
     description: "ゲームオブジェクトの基底クラスでは、適切なリソース管理のために、メンバ初期化リスト、仮想デストラクタ、そして意図しないコピーの禁止（または適切な実装）が不可欠です。",
     task: "`BaseActor` クラスで以下の対応を行ってください： 1. メンバ初期化リストを使用 2. 仮想デストラクタを実装 3. コピーコンストラクタを禁止(= delete)",
     initialCode: `#include <iostream>
@@ -4850,7 +4850,7 @@ private:
   {
     id: "game-virtual-inheritance",
     category: "Game Programming",
-    title: "41. 仮想継承と菱形継承 (Virtual Inheritance)",
+    title: "6. 仮想継承と菱形継承 (Virtual Inheritance)",
     description: "複数の経路から共通の基底クラスを継承する際、基底クラスの実体が複数生成される「菱形継承問題」を解決するために、仮想継承（virtual inheritance）を使用します。",
     task: "`Actor` と `Prop` が `GameObject` を `virtual` 継承するように修正してください。これにより、`PlayerCharacter` 内で `id` メンバが一つに集約されます。",
     initialCode: `#include <iostream>
@@ -4899,7 +4899,7 @@ class Prop : public virtual GameObject {};`,
   {
     id: "game-mixin-pattern",
     category: "Game Programming",
-    title: "42. 多重継承による Mixin (Mixin Pattern)",
+    title: "7. 多重継承による Mixin (Mixin Pattern)",
     description: "多重継承を利用して、独立した小規模なクラス（ミックスイン）を既存のクラスに組み合わせることで、柔軟な機能拡張が可能になります。",
     task: "`Player` クラスに `Flyable` と `Swimmable` の両方を継承させ、`action` メソッド内でそれらの機能（fly, swim）を呼び出してください。",
     initialCode: `#include <iostream>
@@ -4969,7 +4969,7 @@ public:
   {
     id: "game-plugin-system",
     category: "Game Programming",
-    title: "43. 抽象インターフェイスによるプラグインシステム (Plugin System)",
+    title: "8. 抽象インターフェイスによるプラグインシステム (Plugin System)",
     description: "ゲームエンジンでは、機能を拡張するためにプラグインシステムが使われます。メインエンジンは各プラグインの具体的な実装を知らなくても、共通のインターフェイス（抽象クラス）を通じて追加された機能を操作できます。",
     task: "`IGamePlugin` インターフェイスを実装した `PhysicsPlugin` クラスを作成してください。また、`main` 関数内でそのインスタンスを `PluginManager` に登録してください。",
     initialCode: `#include <iostream>
@@ -5059,7 +5059,7 @@ manager.registerPlugin(std::make_unique<PhysicsPlugin>());`,
   {
     id: "game-memory-pool",
     category: "Game Programming",
-    title: "44. 固定サイズメモリプール (Memory Pool)",
+    title: "9. 固定サイズメモリプール (Memory Pool)",
     description: "頻繁なオブジェクトの生成と破棄が必要なゲーム開発では、ヒープからのメモリ確保・解放を繰り返すと、パフォーマンス低下やメモリの断片化（フラグメンテーション）が起こります。あらかじめ固定サイズの配列を確保しておく「メモリプール」はその解決策の一つです。",
     task: "10個の `Actor` オブジェクトを保持できるメモリプールから、空いている（`id == -1`）スロットを探してそのポインタを返す `allocate()` メソッドを実装してください。空きがない場合は `nullptr` を返してください。",
     initialCode: `#include <iostream>
@@ -5133,7 +5133,7 @@ int main() {
   {
     id: "game-soa-design",
     category: "Game Programming",
-    title: "45. データ指向設計 (SoA: Structure of Arrays)",
+    title: "10. データ指向設計 (SoA: Structure of Arrays)",
     description: "大量のオブジェクトを更新する場合、オブジェクトの配列 (AoS: Array of Structures) よりも、各属性ごとの配列 (SoA: Structure of Arrays) を持つ方が、CPUキャッシュの効率が良くなることがあります（データ指向設計）。",
     task: "`ParticleSystem` クラスの `update(float dt)` メソッドを実装し、すべてのパーティクルの `posX` 配列の要素に `dt` を加算してください。",
     initialCode: `#include <iostream>
@@ -5193,7 +5193,7 @@ int main() {
   {
     id: "game-bit-flags",
     category: "Game Programming",
-    title: "46. ビットフラグによる状態管理 (Bit Flags)",
+    title: "11. ビットフラグによる状態管理 (Bit Flags)",
     description: "キャラクターの「毒」「スタン」「無敵」といった多数のON/OFF状態を管理する場合、それぞれのフラグに1ビットを割り当てて一つの整数で管理することで、メモリ節約と高速な判定が可能になります。",
     task: "`Entity` クラスに、フラグを立てる `setFlag` と、フラグが立っているかを確認する `isFlagSet` を実装してください。",
     initialCode: `#include <iostream>
@@ -5255,7 +5255,7 @@ bool isFlagSet(EntityState state) const {
   {
     id: "game-inline-functions",
     category: "Game Programming",
-    title: "47. インライン関数による最適化 (Inline Functions)",
+    title: "12. インライン関数による最適化 (Inline Functions)",
     description: "プロパティの取得（ゲッター）や単純な数学演算など、非常に小規模で頻繁に呼び出される関数は、関数の呼び出しコスト自体が無視できなくなることがあります。`inline` を指定することで、コンパイラに関数の内容を呼び出し元に直接展開するよう促すことができます。",
     task: "2つの `Vector2` を加算する `add` 関数をインライン関数として定義してください。",
     initialCode: `#include <iostream>
@@ -5304,7 +5304,7 @@ int main() {
   {
     id: "game-safe-cast",
     category: "Game Programming",
-    title: "48. 安全なダウンキャスト (Safe Casting)",
+    title: "13. 安全なダウンキャスト (Safe Casting)",
     description: "C++の `dynamic_cast` は実行時に型チェックを行いますが、パフォーマンス上の理由からゲーム開発では、独自の型IDを用いた高速なキャスト（`static_cast` と型チェックの組み合わせ）を自前で実装することが一般的です。",
     task: "型ID `EntityType` をチェックして、`Monster` クラスへの有効なポインタであれば `static_cast` で変換して返し、そうでなければ `nullptr` を返す `asMonster` 関数を実装してください。",
     initialCode: `#include <iostream>
@@ -5371,7 +5371,7 @@ int main() {
   {
     id: "game-const-correctness",
     category: "Game Programming",
-    title: "49. Const-正しい設計 (Const-Correctness)",
+    title: "14. Const-正しい設計 (Const-Correctness)",
     description: "描画関数(render)など、オブジェクトの状態を変更すべきでない関数を `const` メンバ関数にすることで、バグを未然に防ぎ、コードの意図を明確にできます。また、`const` オブジェクトに対してもその関数が呼べるようになります。",
     task: "`GameObject` クラスの `render()` メソッドを `const` メンバ関数にし、関数内で状態を変更（healthを減らす）しようとしている誤った処理をコメントアウトまたは削除してください。",
     initialCode: `#include <iostream>
@@ -5430,7 +5430,7 @@ int main() {
   {
     id: "game-error-handling",
     category: "Game Programming",
-    title: "50. 例外を使わないエラー処理 (Error Handling)",
+    title: "15. 例外を使わないエラー処理 (Error Handling)",
     description: "ゲームプログラムでは、例外処理(try-catch)による実行時のオーバーヘッドを避けるため（または特定のプラットフォームの制限により）、古いC言語のような戻り値ベース、あるいはモダンな `Result`（または `Optional`）型によるエラー処理が好まれます。",
     task: "セーブデータを読み込む `loadGameData` 関数を実装してください。`id` が 0 未満なら失敗、0 以上なら成功（データ \"PlayerSaveData\"）を `Result` 構造体で返してください。",
     initialCode: `#include <iostream>
@@ -5482,7 +5482,7 @@ int main() {
   {
     id: "game-template-allocator",
     category: "Game Programming",
-    title: "51. テンプレートによるアロケータの抽象化 (Template Allocator)",
+    title: "16. テンプレートによるアロケータの抽象化 (Template Allocator)",
     description: "アロケータをテンプレート化することで、任意の型に対して独自のメモリ管理戦略（プール、スタックアロケータ等）を適用できるようになります。STLのコンテナもこれと同じ仕組みでメモリ確保を抽象化しています。",
     task: "引数でもらったメモリ領域 `ptr` 上に、テンプレート引数 `T` の型のオブジェクトを `placement new` で構築する `allocateAt` メソッドを実装してください。",
     initialCode: `#include <iostream>
@@ -5539,7 +5539,7 @@ int main() {
   {
     id: "game-state-machine",
     category: "Game Programming",
-    title: "52. 有限状態マシン (Finite State Machine)",
+    title: "17. 有限状態マシン (Finite State Machine)",
     description: "キャラクターの行動（待機、追跡、攻撃など）を管理するために、状態（State）を列挙型やクラスとして定義し、条件に応じて切り替える手法（FSM）はゲームAIの基本です。",
     task: "`Enemy` クラスの `update` メソッドを実装し、`distanceToPlayer` が 5.0 未満なら状態を `State::Chase` に、それ以外なら `State::Idle` に切り替えるようにしてください。",
     initialCode: `#include <iostream>
@@ -5602,7 +5602,7 @@ int main() {
   {
     id: "game-command-pattern",
     category: "Game Programming",
-    title: "53. コマンドパターン (Command Pattern)",
+    title: "18. コマンドパターン (Command Pattern)",
     description: "アクションを「オブジェクト」としてカプセル化することで、入力と行動を分離したり、リプレイ機能やUndo（取り消し）機能を実装しやすくしたりできます。",
     task: "`Command` 抽象クラスを継承して `JumpCommand` クラスを完成させてください。`execute` メソッド内で `actor.jump()` を呼び出します。",
     initialCode: `#include <iostream>
@@ -5668,7 +5668,7 @@ public:
   {
     id: "game-service-locator",
     category: "Game Programming",
-    title: "54. サービスロケータ (Service Locator)",
+    title: "19. サービスロケータ (Service Locator)",
     description: "シングルトンの代わりとして、オーディオや描画などの「サービス」を一箇所で提供・管理する仕組みです。テスト時にはモック（偽物）のサービスに容易に差し替えることができます。",
     task: "`ServiceLocator` からオーディオシステムを取得し、音を鳴らす処理を `main` 関数内に実装してください。",
     initialCode: `#include <iostream>
@@ -5736,7 +5736,7 @@ if (audio) {
   {
     id: "game-custom-rtti",
     category: "Game Programming",
-    title: "55. カスタムRTTI (Custom RTTI)",
+    title: "20. カスタムRTTI (Custom RTTI)",
     description: "C++標準の `typeid` は、コンパイラ設定やプラットフォームによってバイナリサイズが増大したり、低速な場合があります。ゲーム開発では、独自の整数IDで型を識別する仕組みがよく自作されます。",
     task: "`Monster` クラスに、自身の型IDを返す `getTypeId()` メソッドをオーバーライド実装してください。",
     initialCode: `#include <iostream>
@@ -5783,7 +5783,7 @@ int main() {
   {
     id: "game-serialization",
     category: "Game Programming",
-    title: "56. シリアライズの基礎 (Serialization)",
+    title: "21. シリアライズの基礎 (Serialization)",
     description: "メモリ上のオブジェクトを、セーブデータや通信用に「保存可能なデータ形式（文字列やバイナリ）」に変換することをシリアライズと呼びます。",
     task: "`Player` クラスのデータを \"Score:[スコア]\" という形式で文字列化する `serialize` メソッドを実装してください。",
     initialCode: `#include <iostream>
