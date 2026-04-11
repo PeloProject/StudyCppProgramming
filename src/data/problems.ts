@@ -1,4 +1,14 @@
 // src/data/problems.ts
+export type ProblemCategory =
+  | "Refactoring"
+  | "Design Patterns"
+  | "Effective C++"
+  | "C++の基礎"
+  | "Game Programming"
+  | "数学";
+
+export type ProblemMode = "normal" | "fill-in-the-blank" | "guided";
+
 export interface Problem {
   id: string;
   title: string;
@@ -6,13 +16,36 @@ export interface Problem {
   task: string;
   initialCode: string;
   testCode: string; // The code concatenated at the bottom to verify the user's implementation
-  category: "Refactoring" | "Design Patterns" | "Effective C++" | "C++の基礎" | "Game Programming" | "数学";
+  category: ProblemCategory;
   hint?: string;
   solution?: string;
   clientValidation?: (code: string) => string | null; // Regex/string validation before sending to API
+  difficulty?: 1 | 2 | 3;
+  estimatedMinutes?: number;
+  skills?: string[];
+  prerequisites?: string[];
+  hintSteps?: string[];
+  successMessage?: string;
+  reviewAfterDays?: number;
+  mode?: ProblemMode;
+  templateSteps?: string[];
+  starterCode?: string;
 }
 
-export const problems: Problem[] = [
+export interface LearningProblem extends Omit<Problem, "difficulty" | "estimatedMinutes" | "skills" | "prerequisites" | "hintSteps" | "successMessage" | "reviewAfterDays" | "mode" | "templateSteps"> {
+  difficulty: 1 | 2 | 3;
+  estimatedMinutes: number;
+  skills: string[];
+  prerequisites: string[];
+  hintSteps: string[];
+  successMessage: string;
+  reviewAfterDays: number;
+  mode: ProblemMode;
+  templateSteps: string[];
+  starterCode?: string;
+}
+
+const rawProblems: Problem[] = [
   {
     id: "extract-function",
     category: "Refactoring",
@@ -1394,7 +1427,7 @@ const Rational operator*(const Rational& lhs, const Rational& rhs) {
           // friend 宣言は許容するが、純粋なメンバ関数としての operator* は禁止する
           // 「operator*」が含まれていても、その直前に「friend」があればOKとする
           const lines = classBody.split('\n');
-          for (let line of lines) {
+          for (const line of lines) {
               if (line.includes("operator*") && !line.includes("friend")) {
                   return "テスト失敗: operator* はクラスのメンバ関数ではなく、非メンバ関数として定義してください（暗黙の型変換を両方の引数に適用するため）。";
               }
@@ -1626,7 +1659,7 @@ int main() {
       const lines = cleanCode.split('\n');
       let foundDefinition = false;
       let foundLengthCheck = false;
-      for (let line of lines) {
+      for (const line of lines) {
           if (line.includes("std::string encrypted")) foundDefinition = true;
           if (line.includes("password.length() < 5")) foundLengthCheck = true;
           
@@ -2056,7 +2089,7 @@ public:
     virtual void error(const std::string& msg) { /* デフォルト */ } // インターフェース + デフォルト実装
     int objectID() const { return 123; } // インターフェース + 必須の実装
 };`,
-    clientValidation: (_code: string) => {
+    clientValidation: () => {
       // 構造チェック
       return null;
     }
@@ -4616,7 +4649,7 @@ int main() {
     // Actor 1つ分のメモリをスタック上に確保（アライメントに注意）
     alignas(Actor) char buffer[sizeof(Actor)];
     
-    // --- TODO: buffer 上に placement new で Actor(\"Hero\") を構築してください ---
+    // --- TODO: buffer 上に placement new で Actor("Hero") を構築してください ---
     Actor* actor = 
     
     if (actor) {
@@ -5874,3 +5907,172 @@ int main() {
   },
 ];
 
+const categoryDefaults: Record<ProblemCategory, Pick<LearningProblem, "difficulty" | "estimatedMinutes" | "skills" | "reviewAfterDays" | "mode" | "templateSteps">> = {
+  "Refactoring": {
+    difficulty: 1,
+    estimatedMinutes: 6,
+    skills: ["コードを小さく分ける", "責務を分離する"],
+    reviewAfterDays: 2,
+    mode: "guided",
+    templateSteps: ["対象の処理を1つに絞る", "新しい関数や型を追加する", "元の処理を呼び出しに置き換える"],
+  },
+  "Design Patterns": {
+    difficulty: 2,
+    estimatedMinutes: 8,
+    skills: ["役割分担", "抽象化", "依存の向きを整える"],
+    reviewAfterDays: 3,
+    mode: "guided",
+    templateSteps: ["共通インターフェースを作る", "具体クラスを分ける", "呼び出し側の分岐を減らす"],
+  },
+  "Effective C++": {
+    difficulty: 2,
+    estimatedMinutes: 5,
+    skills: ["C++の設計原則", "const 正しさ", "リソース管理"],
+    reviewAfterDays: 3,
+    mode: "guided",
+    templateSteps: ["問題のある宣言や代入箇所を見つける", "Item の原則に沿って書き換える", "最小差分で振る舞いを保つ"],
+  },
+  "C++の基礎": {
+    difficulty: 1,
+    estimatedMinutes: 4,
+    skills: ["文法", "基本型", "制御構文"],
+    reviewAfterDays: 2,
+    mode: "fill-in-the-blank",
+    templateSteps: ["TODO の箇所だけに集中する", "必要な文法を1つ書く", "期待出力を見て確認する"],
+  },
+  "Game Programming": {
+    difficulty: 3,
+    estimatedMinutes: 8,
+    skills: ["設計", "パフォーマンス", "安全性"],
+    reviewAfterDays: 4,
+    mode: "guided",
+    templateSteps: ["登場する責務を洗い出す", "必要な型や関数を追加する", "ゲームループや所有権との整合性を保つ"],
+  },
+  "数学": {
+    difficulty: 1,
+    estimatedMinutes: 4,
+    skills: ["数式の実装", "標準ライブラリ", "値の確認"],
+    reviewAfterDays: 2,
+    mode: "fill-in-the-blank",
+    templateSteps: ["式を小さな変数に分ける", "標準関数を1つずつ使う", "サンプル値で確かめる"],
+  },
+};
+
+const problemOverrides: Partial<Record<string, Partial<LearningProblem>>> = {
+  "extract-function": {
+    difficulty: 1,
+    estimatedMinutes: 5,
+    skills: ["関数抽出", "出力処理の分離", "小さく直す"],
+    prerequisites: ["for 文の読み取り", "関数定義"],
+    hintSteps: [
+      "まず `printReceipt(double total)` という関数の箱だけを作りましょう。",
+      "`std::cout` を使っている3行を新しい関数へ移し、元の場所は `printReceipt(total);` だけにします。",
+      "`processOrder` の中に `cout` が残っていないかだけ最後に確認すれば十分です。",
+    ],
+    successMessage: "処理を2つの責務に分けられました。読みやすさが上がり、次の変更もしやすくなっています。",
+    reviewAfterDays: 2,
+    mode: "fill-in-the-blank",
+    templateSteps: ["関数を追加する", "出力3行を移動する", "元の場所を関数呼び出しに置き換える"],
+    starterCode: `#include <iostream>
+#include <vector>
+
+void printReceipt(double total) {
+    // TODO: レシートの3行をここに移動する
+}
+
+void processOrder(const std::vector<double>& prices) {
+    double total = 0.0;
+    for (double price : prices) {
+        total += price;
+    }
+
+    // TODO: printReceipt を呼び出す
+}
+
+int main() {
+    std::vector<double> myPrices = {10.5, 20.0, 5.25};
+    processOrder(myPrices);
+    return 0;
+}
+`,
+  },
+  "strategy-pattern": {
+    difficulty: 2,
+    estimatedMinutes: 8,
+    skills: ["Strategy パターン", "抽象クラス", "分岐の置き換え"],
+    prerequisites: ["継承", "virtual 関数"],
+    hintSteps: [
+      "最初に `PaymentStrategy` という抽象クラスを作り、`pay(int amount)` だけ宣言します。",
+      "`CreditCardStrategy` と `PayPalStrategy` に出力ロジックを分けると、`if` を消しやすくなります。",
+      "`PaymentProcessor` は種類を選ぶのではなく、渡された strategy に仕事を任せる形へ寄せましょう。",
+    ],
+    successMessage: "支払い方法ごとの分岐をオブジェクトに移せました。新しい支払い方法を増やしやすい設計です。",
+  },
+  "effective-cpp-item-20": {
+    difficulty: 1,
+    estimatedMinutes: 4,
+    skills: ["const 参照", "スライシング回避", "ポリモーフィズム"],
+    hintSteps: [
+      "`Window w` を `const Window& w` に変えるだけで方向は合っています。",
+      "本体はほぼそのままで大丈夫です。関数の受け取り方だけ直しましょう。",
+      "参照にした後、`name()` と `display()` がそのまま呼べれば完成です。",
+    ],
+    successMessage: "値渡しによるスライシングを防げました。派生クラスの振る舞いを保ったまま扱えています。",
+    mode: "fill-in-the-blank",
+  },
+  "cpp-basics-hello-world": {
+    successMessage: "最初の一歩を完了しました。出力を確認できたのは立派な前進です。",
+  },
+  "math-euclidean-distance": {
+    hintSteps: [
+      "まず `dx` と `dy` を変数に分けると見通しが良くなります。",
+      "`dx * dx + dy * dy` を作ってから `std::sqrt` をかけましょう。",
+      "`pow` より単純な掛け算でも十分です。期待値 5.0 を目安に確認します。",
+    ],
+    successMessage: "数式をコードに落とし込めました。ゲームでも物理でもよく使う基本計算です。",
+  },
+};
+
+const inferDifficulty = (problem: Problem, fallback: 1 | 2 | 3): 1 | 2 | 3 => {
+  if (problem.difficulty) {
+    return problem.difficulty;
+  }
+
+  if (problem.category === "Game Programming") {
+    return 3;
+  }
+
+  if (problem.category === "C++の基礎" || problem.category === "数学") {
+    return 1;
+  }
+
+  return fallback;
+};
+
+const withProblemDefaults = (problem: Problem): LearningProblem => {
+  const categoryDefault = categoryDefaults[problem.category];
+  const override = problemOverrides[problem.id] || {};
+
+  return {
+    ...problem,
+    ...categoryDefault,
+    difficulty: inferDifficulty(problem, override.difficulty ?? categoryDefault.difficulty),
+    estimatedMinutes: problem.estimatedMinutes ?? override.estimatedMinutes ?? categoryDefault.estimatedMinutes,
+    skills: problem.skills ?? override.skills ?? categoryDefault.skills,
+    prerequisites: problem.prerequisites ?? override.prerequisites ?? [],
+    hintSteps:
+      problem.hintSteps ??
+      override.hintSteps ??
+      (problem.hint ? [problem.hint] : [`まずは TODO の周辺だけに集中して、1か所ずつ直していきましょう。`]),
+    successMessage:
+      problem.successMessage ??
+      override.successMessage ??
+      `${problem.title} を完了しました。1つの概念を自分の手で直せたので、確かな前進です。`,
+    reviewAfterDays: problem.reviewAfterDays ?? override.reviewAfterDays ?? categoryDefault.reviewAfterDays,
+    mode: problem.mode ?? override.mode ?? categoryDefault.mode,
+    templateSteps: problem.templateSteps ?? override.templateSteps ?? categoryDefault.templateSteps,
+    starterCode: problem.starterCode ?? override.starterCode,
+  };
+};
+
+export const problems: LearningProblem[] = rawProblems.map(withProblemDefaults);

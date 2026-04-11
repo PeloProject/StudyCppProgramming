@@ -1,94 +1,119 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  BarChart3,
-  Bot,
-  CheckCircle,
-  ChevronDown,
-  ChevronUp,
-  Flag,
+  BookOpen,
+  CalendarClock,
+  CheckCircle2,
+  ChevronRight,
+  Flame,
+  Home,
+  Lightbulb,
   Loader2,
+  Medal,
   Play,
+  RefreshCcw,
+  Sparkles,
   Target,
-  Trophy,
+  TrendingUp,
+  Wand2,
   XCircle,
 } from 'lucide-react';
 import { CodeEditor } from './components/CodeEditor';
-import { problems } from './data/problems';
+import { problems, type LearningProblem } from './data/problems';
 import { compileCode } from './services/compiler';
 
-declare global {
-  interface Window {
-    MathJax?: {
-      typesetPromise?: () => Promise<unknown>;
-    };
-  }
+type ViewMode = 'home' | 'practice' | 'review';
+type FeedbackStatus = 'idle' | 'passed' | 'failed' | 'error';
+
+interface RunFeedback {
+  status: FeedbackStatus;
+  headline: string;
+  body: string;
+  nextStep?: string;
+  rawMessage?: string;
+  badges?: string[];
 }
 
-type ViewMode = 'practice' | 'analysis';
-type TestStatus = 'idle' | 'passed' | 'failed' | 'error';
-
-interface ProblemStats {
+interface ProblemProgress {
   runCount: number;
   solvedCount: number;
   failedCount: number;
-  retireCount: number;
   attemptsSinceSolved: number;
   lastSolveAttempts: number | null;
   solveAttemptHistory: number[];
   lastPlayedAt: string | null;
   lastSolvedAt: string | null;
-  retiredAfterAttempts: number;
+  scheduledReviewAt: string | null;
+  hintLevelUsed: number;
+  skipWithLearningCount: number;
+  bestAttempts: number | null;
 }
 
-type ProblemStatsMap = Record<string, ProblemStats>;
+interface LearningProfile {
+  streakDays: number;
+  lastActiveDate: string | null;
+  progressMoments: string[];
+  earnedBadges: string[];
+  recentWins: Array<{
+    problemId: string;
+    at: string;
+    message: string;
+  }>;
+}
 
-type ProblemNote = {
-  issue: string;
-  reflection: string;
-  learned: string;
-  updatedAt: string | null;
+type ProblemProgressMap = Record<string, ProblemProgress>;
+type PracticeNotesMap = Record<string, string>;
+
+const PROGRESS_STORAGE_KEY = 'cpp-learning-progress-v2';
+const PROFILE_STORAGE_KEY = 'cpp-learning-profile-v2';
+const NOTES_STORAGE_KEY = 'cpp-learning-notes-v2';
+const CURRENT_PROBLEM_STORAGE_KEY = 'cpp-current-problem-id-v2';
+
+const badgeLabels: Record<string, string> = {
+  first_solve: 'はじめての正解',
+  comeback: '再挑戦クリア',
+  no_hint: 'ノーヒント達成',
+  streak_3: '3日継続',
+  steady_reviewer: '復習できた',
 };
 
-type ProblemNotesMap = Record<string, ProblemNote>;
-
-const STATS_STORAGE_KEY = 'problem-progress-stats';
-const NOTES_STORAGE_KEY = 'problem-notes';
-
-const createEmptyStats = (): ProblemStats => ({
+const createEmptyProblemProgress = (): ProblemProgress => ({
   runCount: 0,
   solvedCount: 0,
   failedCount: 0,
-  retireCount: 0,
   attemptsSinceSolved: 0,
   lastSolveAttempts: null,
   solveAttemptHistory: [],
   lastPlayedAt: null,
   lastSolvedAt: null,
-  retiredAfterAttempts: 0,
+  scheduledReviewAt: null,
+  hintLevelUsed: 0,
+  skipWithLearningCount: 0,
+  bestAttempts: null,
 });
 
-const createEmptyNote = (): ProblemNote => ({
-  issue: '',
-  reflection: '',
-  learned: '',
-  updatedAt: null,
+const createEmptyProfile = (): LearningProfile => ({
+  streakDays: 0,
+  lastActiveDate: null,
+  progressMoments: [],
+  earnedBadges: [],
+  recentWins: [],
 });
 
-const readStoredStats = (): ProblemStatsMap => {
-  const raw = localStorage.getItem(STATS_STORAGE_KEY);
+const readStoredProgress = (): ProblemProgressMap => {
+  const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
   if (!raw) {
     return {};
   }
 
   try {
-    const parsed = JSON.parse(raw) as ProblemStatsMap;
+    const parsed = JSON.parse(raw) as ProblemProgressMap;
     return Object.fromEntries(
-      Object.entries(parsed).map(([problemId, stats]) => [
+      Object.entries(parsed).map(([problemId, progress]) => [
         problemId,
         {
-          ...createEmptyStats(),
-          ...stats,
-          solveAttemptHistory: Array.isArray(stats.solveAttemptHistory) ? stats.solveAttemptHistory : [],
+          ...createEmptyProblemProgress(),
+          ...progress,
+          solveAttemptHistory: Array.isArray(progress.solveAttemptHistory) ? progress.solveAttemptHistory : [],
         },
       ]),
     );
@@ -97,23 +122,34 @@ const readStoredStats = (): ProblemStatsMap => {
   }
 };
 
-const readStoredNotes = (): ProblemNotesMap => {
+const readStoredProfile = (): LearningProfile => {
+  const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+  if (!raw) {
+    return createEmptyProfile();
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as LearningProfile;
+    return {
+      ...createEmptyProfile(),
+      ...parsed,
+      progressMoments: Array.isArray(parsed.progressMoments) ? parsed.progressMoments : [],
+      earnedBadges: Array.isArray(parsed.earnedBadges) ? parsed.earnedBadges : [],
+      recentWins: Array.isArray(parsed.recentWins) ? parsed.recentWins : [],
+    };
+  } catch {
+    return createEmptyProfile();
+  }
+};
+
+const readStoredNotes = (): PracticeNotesMap => {
   const raw = localStorage.getItem(NOTES_STORAGE_KEY);
   if (!raw) {
     return {};
   }
 
   try {
-    const parsed = JSON.parse(raw) as ProblemNotesMap;
-    return Object.fromEntries(
-      Object.entries(parsed).map(([problemId, note]) => [
-        problemId,
-        {
-          ...createEmptyNote(),
-          ...note,
-        },
-      ]),
-    );
+    return JSON.parse(raw) as PracticeNotesMap;
   } catch {
     return {};
   }
@@ -132,165 +168,298 @@ const formatDateTime = (value: string | null) => {
   }).format(new Date(value));
 };
 
+const formatDayLabel = (value: string | null) => {
+  if (!value) {
+    return '-';
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+  }).format(new Date(value));
+};
+
+const getDayKey = (date: Date) => date.toLocaleDateString('en-CA');
+
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+const getProgress = (progressMap: ProblemProgressMap, problemId: string) => progressMap[problemId] || createEmptyProblemProgress();
+
+const getVisibleHintCount = (progress: ProblemProgress, problem: LearningProblem) => {
+  const autoCount =
+    progress.attemptsSinceSolved >= 4 ? Math.min(problem.hintSteps.length, 3) : progress.attemptsSinceSolved >= 3 ? Math.min(problem.hintSteps.length, 2) : progress.attemptsSinceSolved >= 2 ? 1 : 0;
+  return Math.max(progress.hintLevelUsed, autoCount);
+};
+
+const summarizeCompilerError = (raw: string) => {
+  const importantLine =
+    raw
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.includes('error:') || line.includes('undefined reference') || line.includes('expected')) ||
+    raw.split('\n').map((line) => line.trim()).find(Boolean) ||
+    raw;
+
+  return {
+    headline: 'コンパイラが止まった場所が見つかりました',
+    body: `まず直すのは1か所で大丈夫です。気になる最初のエラーは「${importantLine}」です。`,
+    nextStep: 'エラーが出ている行の直前にある括弧・セミコロン・型名を順番に確認してみましょう。',
+  };
+};
+
+const getFailureFeedback = (problem: LearningProblem, progress: ProblemProgress, message: string): RunFeedback => {
+  const hintCount = getVisibleHintCount(progress, problem);
+  const nextHint = hintCount > 0 ? problem.hintSteps[hintCount - 1] : '';
+  const practiceMode = progress.attemptsSinceSolved >= 4 ? (problem.starterCode ? '穴埋めモード' : 'ガイドモード') : '通常モード';
+
+  return {
+    status: 'failed',
+    headline: progress.attemptsSinceSolved === 1 ? 'あと1歩です' : '方向はつかめています',
+    body: message,
+    nextStep:
+      progress.attemptsSinceSolved >= 4
+        ? `${practiceMode}に切り替えました。${problem.starterCode ? '下の補助コードを使って進めてみましょう。' : nextHint || '下のステップだけに絞って進めましょう。'}`
+        : nextHint || '次は TODO に関係する1か所だけ直して、もう一度試してみましょう。',
+  };
+};
+
+const chooseBadges = (
+  current: ProblemProgress,
+  profile: LearningProfile,
+  streakDays: number,
+  usedHints: number,
+): string[] => {
+  const earned = new Set<string>();
+  const already = new Set(profile.earnedBadges);
+
+  if (current.solvedCount === 0 && !already.has('first_solve')) {
+    earned.add('first_solve');
+  }
+  if ((current.failedCount > 0 || current.skipWithLearningCount > 0) && !already.has('comeback')) {
+    earned.add('comeback');
+  }
+  if (usedHints === 0 && !already.has('no_hint')) {
+    earned.add('no_hint');
+  }
+  if (streakDays >= 3 && !already.has('streak_3')) {
+    earned.add('streak_3');
+  }
+  if (current.scheduledReviewAt && current.solvedCount > 0 && !already.has('steady_reviewer')) {
+    earned.add('steady_reviewer');
+  }
+
+  return Array.from(earned);
+};
+
 function App() {
-  const [viewMode, setViewMode] = useState<ViewMode>('practice');
-  const [currentProblemIndex, setCurrentProblemIndex] = useState(() => {
-    const saved = localStorage.getItem('current-problem-index');
-    return saved !== null ? Number(saved) : 0;
-  });
-  const [problemStats, setProblemStats] = useState<ProblemStatsMap>(() => readStoredStats());
-  const [problemNotes, setProblemNotes] = useState<ProblemNotesMap>(() => readStoredNotes());
-  const [selectedCategory, setSelectedCategory] = useState<string>(() => {
-    return problems[currentProblemIndex]?.category || problems[0].category;
-  });
+  const initialProblemId = localStorage.getItem(CURRENT_PROBLEM_STORAGE_KEY) || problems[0]?.id || '';
 
-  const problem = problems[currentProblemIndex] || problems[0];
-
-  const [code, setCode] = useState(() => {
-    const savedCode = localStorage.getItem(`problem-${problem.id}-code`);
-    return savedCode || problem.initialCode;
-  });
+  const [viewMode, setViewMode] = useState<ViewMode>('home');
+  const [currentProblemId, setCurrentProblemId] = useState(initialProblemId);
+  const [progressMap, setProgressMap] = useState<ProblemProgressMap>(() => readStoredProgress());
+  const [profile, setProfile] = useState<LearningProfile>(() => readStoredProfile());
+  const [practiceNotes, setPracticeNotes] = useState<PracticeNotesMap>(() => readStoredNotes());
+  const [code, setCode] = useState('');
   const [isCompiling, setIsCompiling] = useState(false);
-  const [testResult, setTestResult] = useState<{ status: TestStatus; message?: string }>({ status: 'idle' });
-  const [showHint, setShowHint] = useState(false);
+  const [feedback, setFeedback] = useState<RunFeedback>({
+    status: 'idle',
+    headline: '今日の1問を始めましょう',
+    body: '小さく直して、すぐ試す流れで十分です。',
+  });
   const [showSolution, setShowSolution] = useState(false);
-  const [showProblemProgress, setShowProblemProgress] = useState(false);
+
+  const problem = problems.find((item) => item.id === currentProblemId) || problems[0];
 
   useEffect(() => {
-    localStorage.setItem(`problem-${problem.id}-code`, code);
-    localStorage.setItem('current-problem-index', currentProblemIndex.toString());
-  }, [code, problem.id, currentProblemIndex]);
+    localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressMap));
+  }, [progressMap]);
 
   useEffect(() => {
-    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify(problemStats));
-  }, [problemStats]);
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  }, [profile]);
 
   useEffect(() => {
-    localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(problemNotes));
-  }, [problemNotes]);
+    localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(practiceNotes));
+  }, [practiceNotes]);
 
   useEffect(() => {
-    setShowHint(false);
-    setShowSolution(false);
-
-    if (window.MathJax && window.MathJax.typesetPromise) {
-      window.MathJax.typesetPromise();
-    }
-  }, [currentProblemIndex]);
-
-  const currentStats = problemStats[problem.id] || createEmptyStats();
-  const averageAttemptsToSolve =
-    currentStats.solveAttemptHistory.length > 0
-      ? (
-          currentStats.solveAttemptHistory.reduce((sum, count) => sum + count, 0) /
-          currentStats.solveAttemptHistory.length
-        ).toFixed(1)
-      : '-';
-
-  const problemSummaries = useMemo(() => {
-    return problems.map((item) => {
-      const stats = problemStats[item.id] || createEmptyStats();
-      const averageSolveAttempts =
-        stats.solveAttemptHistory.length > 0
-          ? stats.solveAttemptHistory.reduce((sum, count) => sum + count, 0) / stats.solveAttemptHistory.length
-          : null;
-      const weaknessScore =
-        stats.retireCount * 3 +
-        stats.failedCount * 1.5 +
-        stats.retiredAfterAttempts * 0.5 +
-        (averageSolveAttempts ?? 0) -
-        stats.solvedCount * 0.75;
-
-      return {
-        ...item,
-        stats,
-        averageSolveAttempts,
-        weaknessScore,
-        isUntouched: stats.runCount === 0 && stats.retireCount === 0,
-        isInProgress: (stats.runCount > 0 || stats.retireCount > 0) && stats.solvedCount === 0,
-      };
-    });
-  }, [problemStats]);
-
-  const weakProblems = useMemo(() => {
-    return problemSummaries
-      .filter((item) => item.stats.runCount > 0 || item.stats.retireCount > 0)
-      .sort((a, b) => b.weaknessScore - a.weaknessScore)
-      .slice(0, 5);
-  }, [problemSummaries]);
-
-  const inProgressProblems = useMemo(() => {
-    return problemSummaries.filter((item) => item.isInProgress);
-  }, [problemSummaries]);
-
-  const activeProblems = useMemo(() => {
-    return [...problemSummaries]
-      .filter((item) => item.stats.lastPlayedAt)
-      .sort((a, b) => new Date(b.stats.lastPlayedAt || 0).getTime() - new Date(a.stats.lastPlayedAt || 0).getTime())
-      .slice(0, 8);
-  }, [problemSummaries]);
-
-  const solvedProblemsCount = useMemo(() => {
-    return problemSummaries.filter((item) => item.stats.solvedCount > 0).length;
-  }, [problemSummaries]);
-
-  const totalRetires = useMemo(() => {
-    return problemSummaries.reduce((sum, item) => sum + item.stats.retireCount, 0);
-  }, [problemSummaries]);
-
-  const totalRuns = useMemo(() => {
-    return problemSummaries.reduce((sum, item) => sum + item.stats.runCount, 0);
-  }, [problemSummaries]);
-
-  const updateProblemStats = (problemId: string, updater: (current: ProblemStats) => ProblemStats) => {
-    setProblemStats((current) => {
-      const base = current[problemId] || createEmptyStats();
-      return {
-        ...current,
-        [problemId]: updater(base),
-      };
-    });
-  };
-
-  const updateProblemNote = (problemId: string, updater: (current: ProblemNote) => ProblemNote) => {
-    setProblemNotes((current) => {
-      const base = current[problemId] || createEmptyNote();
-      return {
-        ...current,
-        [problemId]: updater(base),
-      };
-    });
-  };
-
-  const moveToProblem = (problemId: string) => {
-    const newIdx = problems.findIndex((item) => item.id === problemId);
-    if (newIdx === -1) {
+    if (!problem) {
       return;
     }
 
-    setViewMode('practice');
-    setSelectedCategory(problems[newIdx].category);
-    setCurrentProblemIndex(newIdx);
-    const savedCode = localStorage.getItem(`problem-${problems[newIdx].id}-code`);
-    setCode(savedCode || problems[newIdx].initialCode);
-    setTestResult({ status: 'idle' });
+    localStorage.setItem(CURRENT_PROBLEM_STORAGE_KEY, problem.id);
+    const savedCode = localStorage.getItem(`problem-${problem.id}-code`);
+    setCode(savedCode || problem.initialCode);
+    setShowSolution(false);
+    setFeedback({
+      status: 'idle',
+      headline: '今日の1問を始めましょう',
+      body: `${problem.estimatedMinutes}分くらいで進められる想定です。全部ではなく、次の1手だけに集中すれば大丈夫です。`,
+    });
+  }, [problem]);
+
+  useEffect(() => {
+    if (!problem) {
+      return;
+    }
+
+    localStorage.setItem(`problem-${problem.id}-code`, code);
+  }, [code, problem]);
+
+  const problemSummaries = useMemo(() => {
+    return problems.map((item) => {
+      const progress = getProgress(progressMap, item.id);
+      const averageAttempts =
+        progress.solveAttemptHistory.length > 0
+          ? progress.solveAttemptHistory.reduce((sum, value) => sum + value, 0) / progress.solveAttemptHistory.length
+          : null;
+      const dueForReview = progress.scheduledReviewAt ? new Date(progress.scheduledReviewAt).getTime() <= Date.now() : false;
+      const weaknessScore = progress.failedCount * 1.4 + progress.skipWithLearningCount * 2 + (averageAttempts || 0) - progress.solvedCount * 0.5;
+
+      return {
+        problem: item,
+        progress,
+        averageAttempts,
+        dueForReview,
+        weaknessScore,
+        isUntouched: progress.runCount === 0 && progress.solvedCount === 0,
+        isInProgress: progress.runCount > 0 && progress.solvedCount === 0,
+      };
+    });
+  }, [progressMap]);
+
+  const dueReviews = useMemo(() => problemSummaries.filter((item) => item.dueForReview).sort((a, b) => new Date(a.progress.scheduledReviewAt || 0).getTime() - new Date(b.progress.scheduledReviewAt || 0).getTime()), [problemSummaries]);
+
+  const continueProblem = useMemo(
+    () =>
+      [...problemSummaries]
+        .filter((item) => item.isInProgress)
+        .sort((a, b) => new Date(b.progress.lastPlayedAt || 0).getTime() - new Date(a.progress.lastPlayedAt || 0).getTime())[0],
+    [problemSummaries],
+  );
+
+  const gentleProblem = useMemo(
+    () =>
+      [...problemSummaries]
+        .filter((item) => item.problem.difficulty === 1 && item.progress.solvedCount === 0)
+        .sort((a, b) => a.progress.runCount - b.progress.runCount || a.problem.estimatedMinutes - b.problem.estimatedMinutes)[0],
+    [problemSummaries],
+  );
+
+  const recommendedProblem = continueProblem || gentleProblem || problemSummaries[0];
+
+  const comebackProblem = useMemo(
+    () =>
+      [...problemSummaries]
+        .filter((item) => item.progress.failedCount > 0 || item.progress.skipWithLearningCount > 0)
+        .sort((a, b) => b.weaknessScore - a.weaknessScore)[0],
+    [problemSummaries],
+  );
+
+  const visibleHints = problem ? problem.hintSteps.slice(0, getVisibleHintCount(getProgress(progressMap, problem.id), problem)) : [];
+  const currentProgress = problem ? getProgress(progressMap, problem.id) : createEmptyProblemProgress();
+  const practiceAssistMode = currentProgress.attemptsSinceSolved >= 4 ? (problem.starterCode ? 'fill-in-the-blank' : 'guided') : 'normal';
+  const solvedProblemsCount = problemSummaries.filter((item) => item.progress.solvedCount > 0).length;
+  const weeklyForwardSteps = profile.progressMoments.filter((value) => Date.now() - new Date(value).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
+
+  const openProblem = (problemId: string, nextView: ViewMode = 'practice', overrideCode?: string) => {
+    const targetProblem = problems.find((item) => item.id === problemId);
+    if (!targetProblem) {
+      return;
+    }
+
+    setCurrentProblemId(problemId);
+    setViewMode(nextView);
+
+    const savedCode = localStorage.getItem(`problem-${targetProblem.id}-code`);
+    const nextCode = overrideCode || savedCode || targetProblem.initialCode;
+    setCode(nextCode);
+
+    if (overrideCode) {
+      localStorage.setItem(`problem-${targetProblem.id}-code`, overrideCode);
+    }
+  };
+
+  const recordActivity = () => {
+    const now = new Date();
+    const todayKey = getDayKey(now);
+
+    let nextStreak = profile.streakDays;
+    if (profile.lastActiveDate !== todayKey) {
+      if (!profile.lastActiveDate) {
+        nextStreak = 1;
+      } else {
+        const previousDay = addDays(now, -1);
+        nextStreak = profile.lastActiveDate === getDayKey(previousDay) ? profile.streakDays + 1 : 1;
+      }
+    }
+
+    setProfile((current) => ({
+      ...current,
+      streakDays: current.lastActiveDate === todayKey ? current.streakDays : nextStreak,
+      lastActiveDate: todayKey,
+    }));
+
+    return nextStreak;
+  };
+
+  const appendProgressMoment = (message: string) => {
+    const timestamp = new Date().toISOString();
+    setProfile((current) => ({
+      ...current,
+      progressMoments: [...current.progressMoments, timestamp].slice(-50),
+      recentWins: [...current.recentWins, { problemId: problem.id, at: timestamp, message }].slice(-8),
+    }));
+  };
+
+  const grantBadges = (badgeIds: string[]) => {
+    if (badgeIds.length === 0) {
+      return [];
+    }
+
+    const labels = badgeIds.map((id) => badgeLabels[id]).filter(Boolean);
+    setProfile((current) => ({
+      ...current,
+      earnedBadges: Array.from(new Set([...current.earnedBadges, ...badgeIds])),
+    }));
+    return labels;
+  };
+
+  const updateProblemProgress = (problemId: string, updater: (current: ProblemProgress) => ProblemProgress) => {
+    setProgressMap((current) => {
+      const base = current[problemId] || createEmptyProblemProgress();
+      return {
+        ...current,
+        [problemId]: updater(base),
+      };
+    });
   };
 
   const handleRunCode = async () => {
+    if (!problem) {
+      return;
+    }
+
+    const streakAfterActivity = recordActivity();
     setIsCompiling(true);
-    setTestResult({ status: 'idle' });
 
     if (problem.clientValidation) {
       const clientError = problem.clientValidation(code);
       if (clientError) {
-        updateProblemStats(problem.id, (current) => ({
-          ...current,
-          runCount: current.runCount + 1,
-          failedCount: current.failedCount + 1,
-          attemptsSinceSolved: current.attemptsSinceSolved + 1,
+        const nextProgress = {
+          ...currentProgress,
+          runCount: currentProgress.runCount + 1,
+          failedCount: currentProgress.failedCount + 1,
+          attemptsSinceSolved: currentProgress.attemptsSinceSolved + 1,
           lastPlayedAt: new Date().toISOString(),
-        }));
-        setTestResult({ status: 'failed', message: clientError });
+        };
+
+        updateProblemProgress(problem.id, () => nextProgress);
+        setFeedback(getFailureFeedback(problem, nextProgress, clientError));
         setIsCompiling(false);
         return;
       }
@@ -304,579 +473,682 @@ function App() {
       const response = await compileCode({ code: combinedCode });
 
       if (response.compiler_error) {
-        updateProblemStats(problem.id, (current) => ({
-          ...current,
-          runCount: current.runCount + 1,
-          failedCount: current.failedCount + 1,
-          attemptsSinceSolved: current.attemptsSinceSolved + 1,
+        const nextProgress = {
+          ...currentProgress,
+          runCount: currentProgress.runCount + 1,
+          failedCount: currentProgress.failedCount + 1,
+          attemptsSinceSolved: currentProgress.attemptsSinceSolved + 1,
           lastPlayedAt: new Date().toISOString(),
-        }));
-        setTestResult({
+        };
+
+        updateProblemProgress(problem.id, () => nextProgress);
+        const summary = summarizeCompilerError(response.compiler_error);
+        setFeedback({
           status: 'error',
-          message: response.compiler_error,
+          headline: summary.headline,
+          body: summary.body,
+          nextStep: summary.nextStep,
+          rawMessage: response.compiler_error,
         });
-      } else {
-        const output = response.program_message || '';
-        if (output.includes('TEST_PASSED')) {
-          updateProblemStats(problem.id, (current) => {
-            const attemptsNeeded = current.attemptsSinceSolved + 1;
-            return {
-              ...current,
-              runCount: current.runCount + 1,
-              solvedCount: current.solvedCount + 1,
-              attemptsSinceSolved: 0,
-              lastSolveAttempts: attemptsNeeded,
-              solveAttemptHistory: [...current.solveAttemptHistory, attemptsNeeded],
-              lastPlayedAt: new Date().toISOString(),
-              lastSolvedAt: new Date().toISOString(),
-            };
-          });
-          setTestResult({ status: 'passed', message: 'All tests passed successfully!' });
-        } else if (output.includes('TEST_FAILED')) {
-          updateProblemStats(problem.id, (current) => ({
-            ...current,
-            runCount: current.runCount + 1,
-            failedCount: current.failedCount + 1,
-            attemptsSinceSolved: current.attemptsSinceSolved + 1,
-            lastPlayedAt: new Date().toISOString(),
-          }));
-          const match = output.match(/TEST_FAILED:(.*)/);
-          setTestResult({ status: 'failed', message: match ? match[1] : 'Tests failed.' });
-        } else {
-          updateProblemStats(problem.id, (current) => ({
-            ...current,
-            runCount: current.runCount + 1,
-            failedCount: current.failedCount + 1,
-            attemptsSinceSolved: current.attemptsSinceSolved + 1,
-            lastPlayedAt: new Date().toISOString(),
-          }));
-          setTestResult({ status: 'error', message: 'Unable to parse test results. Did you modify the main function?' });
-        }
+        return;
       }
-    } catch (error: unknown) {
-      updateProblemStats(problem.id, (current) => ({
-        ...current,
-        runCount: current.runCount + 1,
-        failedCount: current.failedCount + 1,
-        attemptsSinceSolved: current.attemptsSinceSolved + 1,
+
+      const output = response.program_message || '';
+
+      if (output.includes('TEST_PASSED')) {
+        const attemptsNeeded = currentProgress.attemptsSinceSolved + 1;
+        const now = new Date();
+        const scheduledReviewAt = addDays(now, problem.reviewAfterDays).toISOString();
+        const nextProgress: ProblemProgress = {
+          ...currentProgress,
+          runCount: currentProgress.runCount + 1,
+          solvedCount: currentProgress.solvedCount + 1,
+          attemptsSinceSolved: 0,
+          lastSolveAttempts: attemptsNeeded,
+          solveAttemptHistory: [...currentProgress.solveAttemptHistory, attemptsNeeded],
+          lastPlayedAt: now.toISOString(),
+          lastSolvedAt: now.toISOString(),
+          scheduledReviewAt,
+          bestAttempts:
+            currentProgress.bestAttempts === null ? attemptsNeeded : Math.min(currentProgress.bestAttempts, attemptsNeeded),
+        };
+
+        updateProblemProgress(problem.id, () => nextProgress);
+        appendProgressMoment(problem.successMessage);
+        const badgeIds = chooseBadges(currentProgress, profile, streakAfterActivity, currentProgress.hintLevelUsed);
+        const earnedBadges = grantBadges(badgeIds);
+        setFeedback({
+          status: 'passed',
+          headline: 'できました。ちゃんと前進しています',
+          body: problem.successMessage,
+          nextStep: `次の復習予定は ${formatDayLabel(scheduledReviewAt)} です。忘れる前にもう一度触れるようにしておきます。`,
+          badges: earnedBadges,
+        });
+        return;
+      }
+
+      const failureMessage = output.match(/TEST_FAILED:(.*)/)?.[1]?.trim() || '要件にまだ少しだけ届いていません。';
+      const nextProgress = {
+        ...currentProgress,
+        runCount: currentProgress.runCount + 1,
+        failedCount: currentProgress.failedCount + 1,
+        attemptsSinceSolved: currentProgress.attemptsSinceSolved + 1,
         lastPlayedAt: new Date().toISOString(),
-      }));
-      const message = error instanceof Error ? error.message : 'Network error occurred during compilation.';
-      setTestResult({ status: 'error', message });
+      };
+
+      updateProblemProgress(problem.id, () => nextProgress);
+      setFeedback(getFailureFeedback(problem, nextProgress, failureMessage));
+    } catch (error: unknown) {
+      const nextProgress = {
+        ...currentProgress,
+        runCount: currentProgress.runCount + 1,
+        failedCount: currentProgress.failedCount + 1,
+        attemptsSinceSolved: currentProgress.attemptsSinceSolved + 1,
+        lastPlayedAt: new Date().toISOString(),
+      };
+
+      updateProblemProgress(problem.id, () => nextProgress);
+      const message = error instanceof Error ? error.message : 'コンパイル中にネットワークエラーが発生しました。';
+      setFeedback({
+        status: 'error',
+        headline: '接続でつまずきました',
+        body: 'コードの内容より先に通信が止まった可能性があります。',
+        nextStep: '少し時間をおいてからもう一度試してみましょう。',
+        rawMessage: message,
+      });
     } finally {
       setIsCompiling(false);
     }
   };
 
-  const handleRetire = () => {
-    updateProblemStats(problem.id, (current) => ({
-      ...current,
-      retireCount: current.retireCount + 1,
-      retiredAfterAttempts: current.retiredAfterAttempts + current.attemptsSinceSolved,
-      attemptsSinceSolved: 0,
-      lastPlayedAt: new Date().toISOString(),
-    }));
-    setShowHint(true);
-    setShowSolution(true);
-    setTestResult({
+  const handleUseStarterCode = () => {
+    if (!problem?.starterCode) {
+      return;
+    }
+
+    setCode(problem.starterCode);
+    localStorage.setItem(`problem-${problem.id}-code`, problem.starterCode);
+    setFeedback({
       status: 'idle',
-      message: 'この問題はリタイアとして記録しました。ヒントと解答を表示しています。',
+      headline: '穴埋めしやすい形に整えました',
+      body: '全部を一度に解こうとせず、TODO の場所だけを埋めていきましょう。',
     });
   };
 
-  const PracticeView = (
-    <main className="flex-1 flex overflow-hidden">
-      <div className="w-1/3 min-w-[380px] border-r border-border flex flex-col bg-card/50">
-        <div className="p-6 overflow-y-auto flex-1">
-          <div className="mb-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-semibold">{problem.title}</h2>
+  const handleSkipWithLearning = () => {
+    if (!problem) {
+      return;
+    }
+
+    const nextReviewAt = addDays(new Date(), 1).toISOString();
+    const nextProgress: ProblemProgress = {
+      ...currentProgress,
+      skipWithLearningCount: currentProgress.skipWithLearningCount + 1,
+      attemptsSinceSolved: 0,
+      scheduledReviewAt: nextReviewAt,
+      lastPlayedAt: new Date().toISOString(),
+    };
+
+    updateProblemProgress(problem.id, () => nextProgress);
+    setShowSolution(true);
+    setFeedback({
+      status: 'failed',
+      headline: '今日はここで区切って大丈夫です',
+      body: '解答を見て終わるのではなく、どこがポイントかだけ拾って明日に残します。',
+      nextStep: `復習は ${formatDayLabel(nextReviewAt)} に再提案します。今は下の学びメモに1行だけ残しておくのがおすすめです。`,
+    });
+  };
+
+  const handleReset = () => {
+    if (!problem) {
+      return;
+    }
+
+    setCode(problem.initialCode);
+    localStorage.removeItem(`problem-${problem.id}-code`);
+    setFeedback({
+      status: 'idle',
+      headline: '最初の状態に戻しました',
+      body: 'やり直すときは、前回どこまで分かったかだけを意識すると進みやすいです。',
+    });
+  };
+
+  if (!problem) {
+    return null;
+  }
+
+  const heroStats = [
+    { label: '連続学習', value: `${profile.streakDays}日`, icon: Flame, tone: 'text-orange-300' },
+    { label: '今週の前進', value: `${weeklyForwardSteps}回`, icon: TrendingUp, tone: 'text-emerald-300' },
+    { label: '解けた問題', value: `${solvedProblemsCount}問`, icon: Medal, tone: 'text-sky-300' },
+  ];
+
+  const feedbackTone =
+    feedback.status === 'passed'
+      ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+      : feedback.status === 'error'
+        ? 'border-rose-400/30 bg-rose-500/10 text-rose-100'
+        : feedback.status === 'failed'
+          ? 'border-amber-400/30 bg-amber-500/10 text-amber-100'
+          : 'border-white/10 bg-white/5 text-slate-100';
+
+  const HomeView = (
+    <main className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+        <section className="relative overflow-hidden rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.22),_transparent_28%),linear-gradient(135deg,_rgba(14,23,38,0.95),_rgba(19,41,61,0.92))] p-6 shadow-2xl shadow-slate-950/30">
+          <div className="absolute inset-y-0 right-0 w-1/3 bg-[radial-gradient(circle_at_center,_rgba(125,211,252,0.16),_transparent_60%)]" />
+          <div className="relative grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
+            <div>
+              <p className="text-sm uppercase tracking-[0.25em] text-amber-200/80">Daily Momentum</p>
+              <h1 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                毎日10分で、昨日より少し前に進める C++ 学習フローに切り替えました。
+              </h1>
+              <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-200/80 sm:text-base">
+                今日は「続きの1問」「復習1問」「気軽な1問」をここから選べます。迷うより先に、まず1回コードを動かせる導線を優先しています。
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  onClick={() => recommendedProblem && openProblem(recommendedProblem.problem.id)}
+                  className="inline-flex items-center gap-2 rounded-full bg-amber-300 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-amber-200"
+                >
+                  今日の1問を始める
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('review')}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
+                >
+                  復習を見る
+                  <CalendarClock className="h-4 w-4" />
+                </button>
               </div>
-              <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 text-xs font-medium text-indigo-300">
-                {problem.category}
-              </span>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+              {heroStats.map((item) => (
+                <div key={item.label} className="rounded-2xl border border-white/10 bg-black/20 p-4 backdrop-blur-sm">
+                  <div className="flex items-center gap-3 text-slate-200/75">
+                    <item.icon className={`h-5 w-5 ${item.tone}`} />
+                    <span className="text-sm">{item.label}</span>
+                  </div>
+                  <p className="mt-3 text-2xl font-semibold text-white">{item.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-3">
+          <button
+            onClick={() => recommendedProblem && openProblem(recommendedProblem.problem.id)}
+            className="rounded-[24px] border border-white/10 bg-white/5 p-5 text-left transition hover:border-amber-300/40 hover:bg-white/10"
+          >
+            <div className="flex items-center gap-2 text-sm text-amber-200">
+              <Target className="h-4 w-4" />
+              今日のミッション
+            </div>
+            <h2 className="mt-3 text-xl font-semibold text-white">{recommendedProblem?.problem.title}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              {continueProblem ? '前回の続きから再開すると、最短で手応えが出やすいです。' : '最初の1問として軽く始められる問題です。'}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-300/80">
+              <span className="rounded-full border border-white/10 px-3 py-1">{recommendedProblem?.problem.category}</span>
+              <span className="rounded-full border border-white/10 px-3 py-1">{recommendedProblem?.problem.estimatedMinutes}分目安</span>
+            </div>
+          </button>
+
+          <button
+            onClick={() => (dueReviews[0] ? openProblem(dueReviews[0].problem.id, 'review') : setViewMode('review'))}
+            className="rounded-[24px] border border-white/10 bg-white/5 p-5 text-left transition hover:border-sky-300/40 hover:bg-white/10"
+          >
+            <div className="flex items-center gap-2 text-sm text-sky-200">
+              <CalendarClock className="h-4 w-4" />
+              復習ミッション
+            </div>
+            <h2 className="mt-3 text-xl font-semibold text-white">
+              {dueReviews[0] ? dueReviews[0].problem.title : 'まだ復習予定はありません'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              {dueReviews[0]
+                ? `前回の正解から少し時間を空けたので、今やり直すと定着しやすいタイミングです。`
+                : '今日の学習を終えると、ここに次回の復習候補が並ぶようになります。'}
+            </p>
+            <div className="mt-4 text-xs text-slate-300/80">
+              {dueReviews[0] ? `提案日: ${formatDayLabel(dueReviews[0].progress.scheduledReviewAt)}` : '次の復習提案を準備中'}
+            </div>
+          </button>
+
+          <button
+            onClick={() => (gentleProblem ? openProblem(gentleProblem.problem.id) : comebackProblem && openProblem(comebackProblem.problem.id))}
+            className="rounded-[24px] border border-white/10 bg-white/5 p-5 text-left transition hover:border-emerald-300/40 hover:bg-white/10"
+          >
+            <div className="flex items-center gap-2 text-sm text-emerald-200">
+              <Sparkles className="h-4 w-4" />
+              気軽な1問
+            </div>
+            <h2 className="mt-3 text-xl font-semibold text-white">
+              {gentleProblem?.problem.title || comebackProblem?.problem.title || '最初の1問から始めましょう'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              {gentleProblem
+                ? '短時間で終わりやすい問題を先に置いています。習慣化の入口に向いています。'
+                : '少し苦手だった問題も、日を空けると意外と進むことがあります。'}
+            </p>
+            <div className="mt-4 text-xs text-slate-300/80">
+              {gentleProblem ? `難易度 ${gentleProblem.problem.difficulty} / ${gentleProblem.problem.estimatedMinutes}分` : '再挑戦向け'}
+            </div>
+          </button>
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <div className="rounded-[24px] border border-white/10 bg-slate-950/50 p-5">
+            <div className="flex items-center gap-2 text-white">
+              <Wand2 className="h-5 w-5 text-amber-200" />
+              <h2 className="text-lg font-semibold">最近できるようになったこと</h2>
+            </div>
+            <div className="mt-4 space-y-3">
+              {profile.recentWins.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm leading-6 text-slate-300">
+                  まだ最初の成功ログがありません。1問クリアすると、ここに「できるようになったこと」が残ります。
+                </div>
+              )}
+              {[...profile.recentWins].reverse().map((item) => {
+                const target = problems.find((entry) => entry.id === item.problemId);
+                if (!target) {
+                  return null;
+                }
+
+                return (
+                  <button
+                    key={`${item.problemId}-${item.at}`}
+                    onClick={() => openProblem(item.problemId)}
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/10"
+                  >
+                    <p className="text-sm text-emerald-200">{formatDateTime(item.at)}</p>
+                    <p className="mt-1 font-medium text-white">{target.title}</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">{item.message}</p>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          <div className="prose prose-invert prose-sm max-w-none text-muted-foreground">
-            <p>{problem.description}</p>
-            <div className="mt-4 rounded-md border border-border bg-muted p-4">
-              <p className="mb-2 font-medium text-foreground">Task:</p>
-              <p className="whitespace-pre-wrap">{problem.task}</p>
+          <div className="rounded-[24px] border border-white/10 bg-slate-950/50 p-5">
+            <div className="flex items-center gap-2 text-white">
+              <Medal className="h-5 w-5 text-sky-200" />
+              <h2 className="text-lg font-semibold">集まったバッジ</h2>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-3">
+              {profile.earnedBadges.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-white/10 px-4 py-5 text-sm text-slate-300">
+                  最初の正解や復習完了で、ここに小さな達成が増えていきます。
+                </div>
+              )}
+              {profile.earnedBadges.map((badgeId) => (
+                <div key={badgeId} className="rounded-full border border-sky-300/20 bg-sky-300/10 px-4 py-2 text-sm text-sky-100">
+                  {badgeLabels[badgeId]}
+                </div>
+              ))}
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              {problem.hint && (
-                <button
-                  onClick={() => setShowHint(!showHint)}
-                  className="rounded border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs text-indigo-400 transition-colors hover:bg-indigo-500/20"
-                >
-                  {showHint ? 'Hide Hint' : 'Show Hint'}
-                </button>
+            <div className="mt-6 border-t border-white/10 pt-4">
+              <h3 className="text-sm font-medium text-slate-200">全問題ライブラリ</h3>
+              <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+                {problemSummaries.map((item) => (
+                  <button
+                    key={item.problem.id}
+                    onClick={() => openProblem(item.problem.id)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
+                  >
+                    <div>
+                      <p className="font-medium text-white">{item.problem.title}</p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        {item.problem.category} / 難易度 {item.problem.difficulty}
+                      </p>
+                    </div>
+                    <span className="text-xs text-slate-300">
+                      {item.progress.solvedCount > 0 ? '学習済み' : item.progress.runCount > 0 ? '途中' : '未着手'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+
+  const ReviewView = (
+    <main className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+        <section className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,_rgba(12,18,30,0.94),_rgba(17,60,74,0.88))] p-6">
+          <p className="text-sm uppercase tracking-[0.25em] text-sky-200/80">Review Loop</p>
+          <h1 className="mt-3 text-3xl font-semibold text-white">忘れる前に、軽くもう一度。</h1>
+          <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-200/80">
+            一度できた問題を少し時間を空けてやり直すと、理解が「知っている」から「使える」に近づきます。重くしすぎず、短い再挑戦だけを並べています。
+          </p>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-[24px] border border-white/10 bg-slate-950/50 p-5">
+            <div className="flex items-center gap-2 text-white">
+              <CalendarClock className="h-5 w-5 text-sky-200" />
+              <h2 className="text-lg font-semibold">今日やる復習</h2>
+            </div>
+            <div className="mt-4 space-y-3">
+              {dueReviews.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm leading-6 text-slate-300">
+                  まだ期限が来た復習はありません。今日新しく解いた問題は、次回ここに並びます。
+                </div>
               )}
-              {problem.solution && (
+              {dueReviews.map((item) => (
                 <button
-                  onClick={() => setShowSolution(!showSolution)}
-                  className="rounded border border-green-500/30 bg-green-500/10 px-3 py-1.5 text-xs text-green-400 transition-colors hover:bg-green-500/20"
+                  key={item.problem.id}
+                  onClick={() => openProblem(item.problem.id, 'practice')}
+                  className="w-full rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/10"
                 >
-                  {showSolution ? 'Hide Solution' : 'Show Solution'}
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-medium text-white">{item.problem.title}</p>
+                      <p className="mt-1 text-sm text-slate-300">{item.problem.successMessage}</p>
+                    </div>
+                    <span className="rounded-full border border-sky-300/20 bg-sky-300/10 px-3 py-1 text-xs text-sky-100">
+                      {formatDayLabel(item.progress.scheduledReviewAt)}
+                    </span>
+                  </div>
                 </button>
-              )}
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[24px] border border-white/10 bg-slate-950/50 p-5">
+            <div className="flex items-center gap-2 text-white">
+              <BookOpen className="h-5 w-5 text-amber-200" />
+              <h2 className="text-lg font-semibold">次に定着させたい問題</h2>
+            </div>
+            <div className="mt-4 space-y-3">
+              {problemSummaries
+                .filter((item) => item.progress.solvedCount > 0)
+                .sort((a, b) => new Date(a.progress.lastSolvedAt || 0).getTime() - new Date(b.progress.lastSolvedAt || 0).getTime())
+                .slice(0, 6)
+                .map((item) => (
+                  <button
+                    key={item.problem.id}
+                    onClick={() => openProblem(item.problem.id, 'practice')}
+                    className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
+                  >
+                    <div>
+                      <p className="font-medium text-white">{item.problem.title}</p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        前回正解: {formatDateTime(item.progress.lastSolvedAt)} / ベスト {item.progress.bestAttempts ?? '-'}回
+                      </p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                  </button>
+                ))}
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+
+  const PracticeView = (
+    <main className="flex-1 overflow-hidden px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto grid h-full w-full max-w-[1600px] gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
+        <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/60">
+          <div className="overflow-y-auto p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm uppercase tracking-[0.25em] text-amber-200/80">{problem.category}</p>
+                <h1 className="mt-2 text-2xl font-semibold text-white">{problem.title}</h1>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs text-slate-200">
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">難易度 {problem.difficulty}</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">{problem.estimatedMinutes}分目安</span>
+              </div>
             </div>
 
-            {showHint && problem.hint && (
-              <div className="mt-4 rounded-md border border-indigo-500/20 bg-indigo-500/5 p-4 text-sm text-indigo-300">
-                <p className="mb-1 font-semibold">Hint</p>
-                <p>{problem.hint}</p>
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm leading-7 text-slate-200">{problem.description}</p>
+              <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Task</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-100">{problem.task}</p>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {problem.skills.map((skill) => (
+                  <span key={skill} className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-xs text-amber-100">
+                    {skill}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className={`mt-5 rounded-2xl border p-4 ${feedbackTone}`}>
+              <div className="flex items-start gap-3">
+                {feedback.status === 'passed' ? (
+                  <CheckCircle2 className="mt-0.5 h-5 w-5" />
+                ) : feedback.status === 'failed' || feedback.status === 'error' ? (
+                  <XCircle className="mt-0.5 h-5 w-5" />
+                ) : (
+                  <Sparkles className="mt-0.5 h-5 w-5" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{feedback.headline}</p>
+                  <p className="mt-2 text-sm leading-6 opacity-90">{feedback.body}</p>
+                  {feedback.nextStep && <p className="mt-2 text-sm leading-6 opacity-90">次の1手: {feedback.nextStep}</p>}
+                  {feedback.badges && feedback.badges.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {feedback.badges.map((badge) => (
+                        <span key={badge} className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs text-white">
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {visibleHints.length > 0 && (
+              <div className="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
+                <div className="flex items-center gap-2 text-amber-100">
+                  <Lightbulb className="h-4 w-4" />
+                  <p className="text-sm font-medium">段階ヒント</p>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {visibleHints.map((hint, index) => (
+                    <div key={hint} className="rounded-xl border border-amber-200/10 bg-black/10 p-3 text-sm leading-6 text-amber-50">
+                      ヒント {index + 1}: {hint}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
-            {showSolution && problem.solution && (
-              <div className="mt-4 rounded-md border border-green-500/20 bg-green-500/5 p-4 text-sm">
-                <p className="mb-1 font-semibold text-green-400">Solution</p>
-                <pre className="mt-2 overflow-x-auto rounded border border-green-500/30 bg-black/40 p-3 text-xs text-green-300/90">
+            {practiceAssistMode !== 'normal' && (
+              <div className="mt-5 rounded-2xl border border-sky-300/20 bg-sky-300/10 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-sky-100">
+                      {practiceAssistMode === 'fill-in-the-blank' ? '穴埋めモード' : 'ガイドモード'}
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-sky-50/90">
+                      ここでは全部を解こうとせず、決めた手順だけを順番に進めます。
+                    </p>
+                  </div>
+                  {problem.starterCode && (
+                    <button
+                      onClick={handleUseStarterCode}
+                      className="rounded-full border border-sky-100/20 bg-sky-100/10 px-4 py-2 text-xs font-medium text-sky-50 transition hover:bg-sky-100/20"
+                    >
+                      補助コードを使う
+                    </button>
+                  )}
+                </div>
+                <div className="mt-4 space-y-2">
+                  {problem.templateSteps.map((step, index) => (
+                    <div key={step} className="rounded-xl border border-sky-100/10 bg-black/10 p-3 text-sm leading-6 text-sky-50">
+                      Step {index + 1}: {step}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">今回の進み具合</p>
+                <div className="mt-3 space-y-2 text-sm text-slate-200">
+                  <p>実行: {currentProgress.runCount}回</p>
+                  <p>今回の挑戦回数: {currentProgress.attemptsSinceSolved}回</p>
+                  <p>ベスト: {currentProgress.bestAttempts ?? '-'}回</p>
+                  <p>次の復習: {formatDayLabel(currentProgress.scheduledReviewAt)}</p>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">小さなメモ</p>
+                <textarea
+                  value={practiceNotes[problem.id] || ''}
+                  onChange={(event) =>
+                    setPracticeNotes((current) => ({
+                      ...current,
+                      [problem.id]: event.target.value,
+                    }))
+                  }
+                  rows={5}
+                  className="mt-3 w-full rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-sm text-white outline-none placeholder:text-slate-500"
+                  placeholder="次に直す1点や、気づいたことを1行だけ残しておくと再開しやすいです。"
+                />
+              </div>
+            </div>
+
+            {(showSolution || feedback.status === 'passed') && problem.solution && (
+              <div className="mt-5 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+                <p className="text-sm font-medium text-emerald-100">学びの答え合わせ</p>
+                <p className="mt-2 text-sm leading-6 text-emerald-50/90">
+                  丸写しより、どこが自分のコードと違うかを1点だけ比べるのがおすすめです。
+                </p>
+                <pre className="mt-3 overflow-x-auto rounded-2xl border border-emerald-100/10 bg-slate-950/80 p-3 text-xs text-emerald-50">
                   {problem.solution}
                 </pre>
               </div>
             )}
           </div>
-
-          <div className="mt-8">
-            <h3 className="border-b border-border pb-2 text-lg font-medium">Test Results</h3>
-
-            <div className="mt-4 space-y-4">
-              {testResult.status === 'idle' && (
-                <div className="flex items-center gap-3 rounded-md border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
-                  <span className="flex h-3 w-3 items-center justify-center rounded-full border border-border bg-muted-foreground/30"></span>
-                  {testResult.message || 'No tests run yet. Click "Run Code" to compile and execute.'}
-                </div>
-              )}
-
-              {testResult.status === 'passed' && (
-                <div className="flex items-start gap-3 rounded-md border border-green-500/20 bg-green-500/10 p-4 text-sm">
-                  <CheckCircle className="mt-0.5 h-5 w-5 text-green-500" />
-                  <div>
-                    <p className="font-medium text-green-500">Success!</p>
-                    <p className="mt-1 text-green-500/80">{testResult.message}</p>
-                  </div>
-                </div>
-              )}
-
-              {testResult.status === 'failed' && (
-                <div className="flex items-start gap-3 rounded-md border border-red-500/20 bg-red-500/10 p-4 text-sm">
-                  <XCircle className="mt-0.5 h-5 w-5 text-red-500" />
-                  <div>
-                    <p className="font-medium text-red-500">Test Failed</p>
-                    <p className="mt-1 text-red-500/80">{testResult.message}</p>
-                  </div>
-                </div>
-              )}
-
-              {testResult.status === 'error' && (
-                <div className="flex flex-col gap-2 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm">
-                  <div className="flex items-center gap-3">
-                    <XCircle className="h-5 w-5 text-destructive" />
-                    <span className="font-medium text-destructive">Compilation / Execution Error</span>
-                  </div>
-                  {testResult.message && (
-                    <pre className="mt-2 overflow-x-auto rounded border border-border bg-background p-3 text-xs text-destructive/80">
-                      {testResult.message}
-                    </pre>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-8 rounded-xl border border-border bg-background/70">
-            <button
-              onClick={() => setShowProblemProgress((current) => !current)}
-              className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-card/40"
-            >
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Problem Progress</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  正解 {currentStats.solvedCount} / リタイア {currentStats.retireCount} / 実行 {currentStats.runCount}
-                </p>
-              </div>
-              {showProblemProgress ? (
-                <ChevronUp className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              )}
-            </button>
-
-            {showProblemProgress && (
-              <div className="border-t border-border px-4 pb-4 pt-3">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-lg border border-border bg-card px-3 py-3">
-                    <p className="text-muted-foreground">正解回数</p>
-                    <p className="mt-1 text-xl font-semibold text-green-400">{currentStats.solvedCount}</p>
-                  </div>
-                  <div className="rounded-lg border border-border bg-card px-3 py-3">
-                    <p className="text-muted-foreground">リタイア回数</p>
-                    <p className="mt-1 text-xl font-semibold text-amber-300">{currentStats.retireCount}</p>
-                  </div>
-                  <div className="rounded-lg border border-border bg-card px-3 py-3">
-                    <p className="text-muted-foreground">今回の正解まで残り挑戦数</p>
-                    <p className="mt-1 text-xl font-semibold">{currentStats.attemptsSinceSolved}</p>
-                  </div>
-                  <div className="rounded-lg border border-border bg-card px-3 py-3">
-                    <p className="text-muted-foreground">直近の正解までの回数</p>
-                    <p className="mt-1 text-xl font-semibold">{currentStats.lastSolveAttempts ?? '-'}</p>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                  <span>平均正解回数: {averageAttemptsToSolve}</span>
-                  <span>実行回数: {currentStats.runCount}</span>
-                  <span>失敗回数: {currentStats.failedCount}</span>
-                  <span>最終正解: {formatDateTime(currentStats.lastSolvedAt)}</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-6 rounded-xl border border-border bg-background/70 p-4">
-            <h3 className="border-b border-border pb-2 text-lg font-medium">Learning Notes</h3>
-            <div className="mt-4 grid gap-4">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-muted-foreground">つまずいた点</label>
-                <textarea
-                  value={(problemNotes[problem.id] || createEmptyNote()).issue}
-                  onChange={(event) =>
-                    updateProblemNote(problem.id, (current) => ({
-                      ...current,
-                      issue: event.target.value,
-                      updatedAt: new Date().toISOString(),
-                    }))
-                  }
-                  rows={4}
-                  className="w-full rounded-md border border-border bg-card p-3 text-sm text-foreground focus:border-indigo-500 focus:ring-indigo-500"
-                  placeholder="何がわからなかったかを簡単に書いておきましょう。"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-muted-foreground">振り返り / 解法のポイント</label>
-                <textarea
-                  value={(problemNotes[problem.id] || createEmptyNote()).reflection}
-                  onChange={(event) =>
-                    updateProblemNote(problem.id, (current) => ({
-                      ...current,
-                      reflection: event.target.value,
-                      updatedAt: new Date().toISOString(),
-                    }))
-                  }
-                  rows={4}
-                  className="w-full rounded-md border border-border bg-card p-3 text-sm text-foreground focus:border-indigo-500 focus:ring-indigo-500"
-                  placeholder="どのように解いたか、自分の考えをまとめておきましょう。"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-muted-foreground">学んだこと</label>
-                <textarea
-                  value={(problemNotes[problem.id] || createEmptyNote()).learned}
-                  onChange={(event) =>
-                    updateProblemNote(problem.id, (current) => ({
-                      ...current,
-                      learned: event.target.value,
-                      updatedAt: new Date().toISOString(),
-                    }))
-                  }
-                  rows={4}
-                  className="w-full rounded-md border border-border bg-card p-3 text-sm text-foreground focus:border-indigo-500 focus:ring-indigo-500"
-                  placeholder="今回の学習で得た事実や注意点を書いておきましょう。"
-                />
-              </div>
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              最終更新: {formatDateTime((problemNotes[problem.id] || createEmptyNote()).updatedAt)}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex-1 flex flex-col bg-[#1e1e1e]">
-        <div className="flex items-center justify-between border-b border-[#1e1e1e] bg-[#2d2d2d] px-4 py-2 text-xs text-gray-300">
-          <div className="flex items-center font-mono">
-            <Bot className="mr-2 h-3 w-3 text-indigo-400" />
-            main.cpp
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleRetire}
-              className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-amber-200 transition-colors hover:bg-amber-500/20"
-            >
-              <Flag className="h-3.5 w-3.5" />
-              Retire
-            </button>
-            <button
-              onClick={handleRunCode}
-              disabled={isCompiling}
-              className="flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-1.5 font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-600/50"
-            >
-              {isCompiling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-current" />}
-              {isCompiling ? 'Running...' : 'Console / Run Code'}
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 relative">
-          <CodeEditor value={code} onChange={(val) => setCode(val || '')} language="cpp" />
-        </div>
-      </div>
-    </main>
-  );
-
-  const AnalysisView = (
-    <main className="flex-1 overflow-y-auto bg-background">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-6">
-        <section className="grid gap-4 md:grid-cols-4">
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center gap-3 text-muted-foreground">
-              <Trophy className="h-5 w-5 text-green-400" />
-              解いた問題
-            </div>
-            <p className="mt-3 text-3xl font-semibold">{solvedProblemsCount}</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center gap-3 text-muted-foreground">
-              <Play className="h-5 w-5 text-indigo-400" />
-              総実行回数
-            </div>
-            <p className="mt-3 text-3xl font-semibold">{totalRuns}</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center gap-3 text-muted-foreground">
-              <Flag className="h-5 w-5 text-amber-300" />
-              総リタイア
-            </div>
-            <p className="mt-3 text-3xl font-semibold">{totalRetires}</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center gap-3 text-muted-foreground">
-              <Target className="h-5 w-5 text-cyan-300" />
-              進行中
-            </div>
-            <p className="mt-3 text-3xl font-semibold">{inProgressProblems.length}</p>
-          </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center gap-3">
-              <BarChart3 className="h-5 w-5 text-red-400" />
-              <h2 className="text-lg font-semibold">弱点になりやすい問題</h2>
+        <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[#111827]">
+          <div className="flex items-center justify-between border-b border-white/10 bg-black/20 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-slate-300">
+              <BookOpen className="h-4 w-4 text-amber-200" />
+              `main.cpp`
             </div>
-            <div className="mt-4 space-y-3">
-              {weakProblems.length === 0 && (
-                <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  まだ分析できる記録がありません。いくつか問題を解くとここに苦手候補が表示されます。
-                </p>
-              )}
-              {weakProblems.map((item, index) => (
-                <button
-                  key={item.id}
-                  onClick={() => moveToProblem(item.id)}
-                  className="flex w-full items-center justify-between rounded-xl border border-border bg-background/60 px-4 py-4 text-left transition-colors hover:border-indigo-500/40 hover:bg-background"
-                >
-                  <div>
-                    <p className="text-xs text-muted-foreground">#{index + 1} {item.category}</p>
-                    <p className="mt-1 font-medium">{item.title}</p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      失敗 {item.stats.failedCount} / リタイア {item.stats.retireCount} / 平均正解回数 {item.averageSolveAttempts?.toFixed(1) ?? '-'}
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1 text-xs text-red-300">
-                    score {item.weaknessScore.toFixed(1)}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <h2 className="text-lg font-semibold">進行中の問題</h2>
-            <div className="mt-4 space-y-3">
-              {inProgressProblems.length === 0 && (
-                <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  まだ進行中の問題はありません。未正解で触った問題がここに並びます。
-                </p>
-              )}
-              {inProgressProblems.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => moveToProblem(item.id)}
-                  className="block w-full rounded-xl border border-border bg-background/60 px-4 py-4 text-left transition-colors hover:border-cyan-500/40 hover:bg-background"
-                >
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    実行 {item.stats.runCount} / 失敗 {item.stats.failedCount} / リタイア {item.stats.retireCount}
-                  </p>
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleSkipWithLearning}
+                className="rounded-full border border-amber-300/20 bg-amber-300/10 px-4 py-2 text-xs font-medium text-amber-100 transition hover:bg-amber-300/20"
+              >
+                学び付きスキップ
+              </button>
+              <button
+                onClick={handleReset}
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-slate-100 transition hover:bg-white/10"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <RefreshCcw className="h-3.5 w-3.5" />
+                  やり直す
+                </span>
+              </button>
+              <button
+                onClick={handleRunCode}
+                disabled={isCompiling}
+                className="rounded-full bg-amber-300 px-5 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="inline-flex items-center gap-2">
+                  {isCompiling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-current" />}
+                  {isCompiling ? '試しています...' : '試してみる'}
+                </span>
+              </button>
             </div>
           </div>
-        </section>
-
-        <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <h2 className="text-lg font-semibold">最近解いている問題</h2>
-            <div className="mt-4 overflow-hidden rounded-xl border border-border">
-              <table className="min-w-full divide-y divide-border text-sm">
-                <thead className="bg-background/70">
-                  <tr className="text-left text-muted-foreground">
-                    <th className="px-4 py-3 font-medium">問題</th>
-                    <th className="px-4 py-3 font-medium">状態</th>
-                    <th className="px-4 py-3 font-medium">最終操作</th>
-                    <th className="px-4 py-3 font-medium">正解回数</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {activeProblems.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">
-                        まだ履歴がありません。
-                      </td>
-                    </tr>
-                  )}
-                  {activeProblems.map((item) => (
-                    <tr
-                      key={item.id}
-                      className="cursor-pointer bg-card/40 transition-colors hover:bg-background/70"
-                      onClick={() => moveToProblem(item.id)}
-                    >
-                      <td className="px-4 py-3">
-                        <p className="font-medium">{item.title}</p>
-                        <p className="text-xs text-muted-foreground">{item.category}</p>
-                      </td>
-                      <td className="px-4 py-3">
-                        {item.isUntouched ? '未着手' : item.isInProgress ? '進行中' : '学習済み'}
-                      </td>
-                      <td className="px-4 py-3">{formatDateTime(item.stats.lastPlayedAt)}</td>
-                      <td className="px-4 py-3">{item.stats.solvedCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="min-h-0 flex-1">
+            <CodeEditor value={code} onChange={(value) => setCode(value || '')} language="cpp" />
           </div>
-
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <h2 className="text-lg font-semibold">全問題の進み具合</h2>
-            <div className="mt-4 space-y-3">
-              {problemSummaries.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => moveToProblem(item.id)}
-                  className="flex w-full items-center justify-between rounded-xl border border-border bg-background/60 px-4 py-3 text-left transition-colors hover:border-indigo-500/40 hover:bg-background"
-                >
-                  <div>
-                    <p className="font-medium">{item.title}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      実行 {item.stats.runCount} / 正解 {item.stats.solvedCount} / リタイア {item.stats.retireCount}
-                    </p>
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {item.isUntouched ? '未着手' : item.isInProgress ? '進行中' : '学習済み'}
-                  </span>
-                </button>
-              ))}
+          {feedback.rawMessage && (
+            <div className="border-t border-white/10 bg-black/25 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Raw Output</p>
+              <pre className="mt-2 max-h-40 overflow-auto rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-xs text-slate-200">
+                {feedback.rawMessage}
+              </pre>
             </div>
-          </div>
+          )}
         </section>
       </div>
     </main>
   );
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Bot className="h-6 w-6 text-indigo-500" />
-            <h1 className="text-xl font-bold tracking-tight">C++ Mastery</h1>
+    <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.08),_transparent_25%),linear-gradient(180deg,_#07111f,_#081421_32%,_#09131d)] text-white">
+      <header className="border-b border-white/10 bg-slate-950/50 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-300 text-slate-950 shadow-lg shadow-amber-300/20">
+              <Sparkles className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.28em] text-amber-200/70">C++ Momentum</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-white">毎日少しずつ前に進む学習アプリ</h1>
+            </div>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-background/60 p-1">
-            <button
-              onClick={() => setViewMode('practice')}
-              className={`rounded-full px-4 py-2 text-sm transition-colors ${
-                viewMode === 'practice' ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Practice
-            </button>
-            <button
-              onClick={() => setViewMode('analysis')}
-              className={`rounded-full px-4 py-2 text-sm transition-colors ${
-                viewMode === 'analysis' ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Analysis
-            </button>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <label className="mr-1 text-sm font-medium text-muted-foreground">Category:</label>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1">
+              <button
+                onClick={() => setViewMode('home')}
+                className={`rounded-full px-4 py-2 text-sm transition ${viewMode === 'home' ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:bg-white/10'}`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Home className="h-4 w-4" />
+                  Home
+                </span>
+              </button>
+              <button
+                onClick={() => setViewMode('practice')}
+                className={`rounded-full px-4 py-2 text-sm transition ${viewMode === 'practice' ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:bg-white/10'}`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Play className="h-4 w-4" />
+                  Practice
+                </span>
+              </button>
+              <button
+                onClick={() => setViewMode('review')}
+                className={`rounded-full px-4 py-2 text-sm transition ${viewMode === 'review' ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:bg-white/10'}`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4" />
+                  Review
+                </span>
+              </button>
+            </div>
+
             <select
-              value={selectedCategory}
-              onChange={(e) => {
-                const newCategory = e.target.value;
-                setSelectedCategory(newCategory);
-                const firstInCategory = problems.findIndex((item) => item.category === newCategory);
-                if (firstInCategory !== -1) {
-                  setCurrentProblemIndex(firstInCategory);
-                  const newProblem = problems[firstInCategory];
-                  const savedCode = localStorage.getItem(`problem-${newProblem.id}-code`);
-                  setCode(savedCode || newProblem.initialCode);
-                  setTestResult({ status: 'idle' });
-                }
-              }}
-              className="block rounded-md border border-border bg-[#1e1e1e] p-2 text-sm text-foreground focus:border-indigo-500 focus:ring-indigo-500"
+              value={problem.id}
+              onChange={(event) => openProblem(event.target.value, 'practice')}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white outline-none"
             >
-              {Array.from(new Set(problems.map((item) => item.category))).map((category) => (
-                <option key={category} value={category}>
-                  {category}
+              {problems.map((item) => (
+                <option key={item.id} value={item.id} className="bg-slate-950 text-white">
+                  {item.title}
                 </option>
               ))}
             </select>
-
-            <label className="ml-2 mr-1 text-sm font-medium text-muted-foreground">Problem:</label>
-            <select
-              value={problem.id}
-              onChange={(e) => moveToProblem(e.target.value)}
-              className="block min-w-[220px] rounded-md border border-border bg-[#1e1e1e] p-2 text-sm text-foreground focus:border-indigo-500 focus:ring-indigo-500"
-            >
-              {problems
-                .filter((item) => item.category === selectedCategory)
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.title}
-                  </option>
-                ))}
-            </select>
           </div>
-
-          <button
-            onClick={() => {
-              if (window.confirm('Are you sure you want to reset the code to its initial state? All your changes will be lost.')) {
-                setCode(problem.initialCode);
-                localStorage.removeItem(`problem-${problem.id}-code`);
-                setTestResult({ status: 'idle' });
-              }
-            }}
-            className="px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Reset
-          </button>
         </div>
       </header>
 
-      {viewMode === 'practice' ? PracticeView : AnalysisView}
+      {viewMode === 'home' ? HomeView : viewMode === 'review' ? ReviewView : PracticeView}
     </div>
   );
 }
