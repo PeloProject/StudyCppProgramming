@@ -1068,6 +1068,265 @@ private:
     }
   },
   {
+    id: "ownership-delete-copy-and-move",
+    category: "Effective C++",
+    title: "所有権クラスのコピー/ムーブ禁止",
+    description: "排他的な所有権を持つクラスでは、うっかりコピーやムーブができると二重解放や責務のあいまいさにつながります。設計として「この所有者は移動も複製もしない」と決めるなら、コピーコンストラクタ・コピー代入・ムーブコンストラクタ・ムーブ代入を明示的に `= delete` しておくのが分かりやすい定石です。",
+    task: "`SocketOwner` は `Connection*` の所有権を持つクラスです。所有権が勝手に移らないように、コピーコンストラクタ、コピー代入演算子、ムーブコンストラクタ、ムーブ代入演算子をすべて `= delete` してください。",
+    initialCode: `#include <iostream>
+#include <type_traits>
+#include <utility>
+
+struct Connection {
+    int id;
+    explicit Connection(int value) : id(value) {}
+};
+
+class SocketOwner {
+public:
+    explicit SocketOwner(Connection* connection) : connection_(connection) {}
+
+    ~SocketOwner() {
+        delete connection_;
+    }
+
+    // --- TODO: 所有権を固定するため、copy / assignment / move をすべて禁止してください ---
+
+    int id() const {
+        return connection_->id;
+    }
+
+private:
+    Connection* connection_;
+};
+
+int main() {
+    SocketOwner owner(new Connection(42));
+    std::cout << owner.id() << std::endl;
+    return 0;
+}
+`,
+    testCode: `
+#include <iostream>
+#include <type_traits>
+
+int main() {
+    if (std::is_copy_constructible<SocketOwner>::value) {
+        std::cout << "TEST_FAILED: コピーコンストラクタが禁止されていません。" << std::endl;
+        return 1;
+    }
+
+    if (std::is_copy_assignable<SocketOwner>::value) {
+        std::cout << "TEST_FAILED: コピー代入が禁止されていません。" << std::endl;
+        return 1;
+    }
+
+    if (std::is_move_constructible<SocketOwner>::value) {
+        std::cout << "TEST_FAILED: ムーブコンストラクタが禁止されていません。" << std::endl;
+        return 1;
+    }
+
+    if (std::is_move_assignable<SocketOwner>::value) {
+        std::cout << "TEST_FAILED: ムーブ代入が禁止されていません。" << std::endl;
+        return 1;
+    }
+
+    SocketOwner owner(new Connection(7));
+    if (owner.id() != 7) {
+        std::cout << "TEST_FAILED: 所有している Connection を正しく参照できません。" << std::endl;
+        return 1;
+    }
+
+    std::cout << "TEST_PASSED" << std::endl;
+    return 0;
+}
+`,
+    hint: "所有権を持つクラスとして扱うなら、`SocketOwner(const SocketOwner&) = delete;`、`SocketOwner& operator=(const SocketOwner&) = delete;` に加えて、`SocketOwner(SocketOwner&&) = delete;` と `SocketOwner& operator=(SocketOwner&&) = delete;` も並べて宣言します。",
+    solution: `class SocketOwner {
+public:
+    explicit SocketOwner(Connection* connection) : connection_(connection) {}
+
+    ~SocketOwner() {
+        delete connection_;
+    }
+
+    SocketOwner(const SocketOwner&) = delete;
+    SocketOwner& operator=(const SocketOwner&) = delete;
+    SocketOwner(SocketOwner&&) = delete;
+    SocketOwner& operator=(SocketOwner&&) = delete;
+
+    int id() const {
+        return connection_->id;
+    }
+
+private:
+    Connection* connection_;
+};`,
+    difficulty: 2,
+    estimatedMinutes: 5,
+    skills: ["所有権設計", "= delete", "コピー制御"],
+    prerequisites: ["コンストラクタ", "デストラクタ", "参照と値の違い"],
+    hintSteps: [
+      "まずコピー系の2つを埋めます。`const SocketOwner&` を受ける宣言を `= delete` にしましょう。",
+      "次にムーブ系の2つを追加します。引数は `SocketOwner&&` です。",
+      "4つとも `public` に置いておくと、使えないことが型のインターフェースとして明確に伝わります。",
+    ],
+    successMessage: "所有権を持つ型の境界を明示できました。コピーもムーブも禁止することで、責務がぶれないクラスになっています。",
+    reviewAfterDays: 3,
+    mode: "fill-in-the-blank",
+    templateSteps: ["コピー系2つを delete する", "ムーブ系2つを delete する", "型特性で禁止できているか確認する"],
+    starterCode: `#include <iostream>
+
+struct Connection {
+    int id;
+    explicit Connection(int value) : id(value) {}
+};
+
+class SocketOwner {
+public:
+    explicit SocketOwner(Connection* connection) : connection_(connection) {}
+
+    ~SocketOwner() {
+        delete connection_;
+    }
+
+    SocketOwner(const SocketOwner&) = delete;
+    SocketOwner& operator=(const SocketOwner&) = delete;
+    // TODO: move も禁止する
+    // SocketOwner(SocketOwner&&) = delete;
+    // SocketOwner& operator=(SocketOwner&&) = delete;
+
+    int id() const {
+        return connection_->id;
+    }
+
+private:
+    Connection* connection_;
+};
+`,
+    clientValidation: (code: string) => {
+      const cleanCode = code.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '');
+
+      if (!/SocketOwner\s*\(\s*const\s+SocketOwner\s*&\s*\)\s*=\s*delete\s*;/.test(cleanCode)) {
+        return "テスト失敗: `SocketOwner(const SocketOwner&) = delete;` を追加してください。";
+      }
+
+      if (!/SocketOwner\s*&\s*operator=\s*\(\s*const\s+SocketOwner\s*&\s*\)\s*=\s*delete\s*;/.test(cleanCode)) {
+        return "テスト失敗: コピー代入演算子を `= delete` してください。";
+      }
+
+      if (!/SocketOwner\s*\(\s*SocketOwner\s*&&\s*\)\s*=\s*delete\s*;/.test(cleanCode)) {
+        return "テスト失敗: `SocketOwner(SocketOwner&&) = delete;` を追加してください。";
+      }
+
+      if (!/SocketOwner\s*&\s*operator=\s*\(\s*SocketOwner\s*&&\s*\)\s*=\s*delete\s*;/.test(cleanCode)) {
+        return "テスト失敗: ムーブ代入演算子を `= delete` してください。";
+      }
+
+      return null;
+    }
+  },
+  {
+    id: "inline-fix-lnk2005",
+    category: "C++の基礎",
+    title: "inline で LNK2005 を防ぐ",
+    description: "ヘッダファイルに通常の関数定義を書いたまま複数の `.cpp` から読み込むと、MSVC では `LNK2005` のような多重定義エラーになることがあります。ヘッダに定義を置く小さな関数は、`inline` を付けて「複数翻訳単位に同じ定義があってよい」ことを明示するのが定石です。",
+    task: "`MathUtils.h` にある `clampHp` の定義が複数の `.cpp` から使われる想定です。`LNK2005` を防ぐため、この関数定義に `inline` を付けてください。",
+    initialCode: `#include <iostream>
+
+// MathUtils.h
+#ifndef MATH_UTILS_H
+#define MATH_UTILS_H
+
+// --- TODO: ヘッダ内定義なので inline を付けてください ---
+int clampHp(int hp) {
+    if (hp < 0) return 0;
+    if (hp > 100) return 100;
+    return hp;
+}
+
+#endif
+
+// Player.cpp から使う想定
+int healPlayer(int hp, int amount) {
+    return clampHp(hp + amount);
+}
+
+// Enemy.cpp から使う想定
+int damageEnemy(int hp, int amount) {
+    return clampHp(hp - amount);
+}
+
+int main() {
+    std::cout << healPlayer(95, 20) << " " << damageEnemy(10, 50) << std::endl;
+    return 0;
+}
+`,
+    testCode: `
+#include <iostream>
+
+int main() {
+    if (healPlayer(95, 20) != 100) {
+        std::cout << "TEST_FAILED: healPlayer の結果が正しくありません。" << std::endl;
+        return 1;
+    }
+
+    if (damageEnemy(10, 50) != 0) {
+        std::cout << "TEST_FAILED: damageEnemy の結果が正しくありません。" << std::endl;
+        return 1;
+    }
+
+    if (clampHp(42) != 42) {
+        std::cout << "TEST_FAILED: clampHp の結果が正しくありません。" << std::endl;
+        return 1;
+    }
+
+    std::cout << "TEST_PASSED" << std::endl;
+    return 0;
+}
+`,
+    hint: "ヘッダファイルに関数の本体まで書くなら、`int clampHp(...)` の前に `inline` を付けます。`inline int clampHp(int hp)` の形にすれば、この用途の多重定義エラーを避けやすくなります。",
+    solution: `inline int clampHp(int hp) {
+    if (hp < 0) return 0;
+    if (hp > 100) return 100;
+    return hp;
+}`,
+    difficulty: 1,
+    estimatedMinutes: 4,
+    skills: ["inline", "ヘッダ設計", "リンカエラーの基礎"],
+    prerequisites: ["関数定義", "ヘッダと実装の分離の基礎"],
+    hintSteps: [
+      "`clampHp` の本体はそのままで大丈夫です。宣言の先頭だけ直しましょう。",
+      "`int clampHp` を `inline int clampHp` に変えるのが今回のポイントです。",
+      "ヘッダに置く小さな関数定義で、複数の `.cpp` から使われるときに有効な書き方として覚えると実践的です。",
+    ],
+    successMessage: "`inline` を使って、ヘッダ定義の多重定義トラブルを防ぐ形に直せました。`LNK2005` の典型的な回避策を1つ身につけられています。",
+    reviewAfterDays: 2,
+    mode: "fill-in-the-blank",
+    templateSteps: ["ヘッダ内の関数定義を探す", "宣言の先頭に inline を付ける", "他の処理は変えずに確認する"],
+    starterCode: `#ifndef MATH_UTILS_H
+#define MATH_UTILS_H
+
+// TODO: inline を付ける
+int clampHp(int hp) {
+    if (hp < 0) return 0;
+    if (hp > 100) return 100;
+    return hp;
+}
+
+#endif
+`,
+    clientValidation: (code: string) => {
+      const cleanCode = code.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '');
+
+      if (!/inline\s+int\s+clampHp\s*\(/.test(cleanCode)) {
+        return "テスト失敗: `clampHp` の定義に `inline` を付けてください。";
+      }
+
+      return null;
+    }
+  },
+  {
     id: "effective-cpp-item-15",
     category: "Effective C++",
     title: "16. Effective C++ 項15 (Item 15)",
