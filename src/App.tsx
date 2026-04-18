@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   CalendarClock,
@@ -6,9 +6,9 @@ import {
   ChevronRight,
   Flame,
   Home,
-  Lightbulb,
   Loader2,
   Medal,
+  MessageSquareCode,
   Play,
   RefreshCcw,
   Sparkles,
@@ -17,12 +17,20 @@ import {
   Wand2,
   XCircle,
 } from 'lucide-react';
+import { AiSettingsPanel } from './components/AiSettingsPanel';
 import { CodeEditor } from './components/CodeEditor';
+import { DailyReviewCard } from './components/DailyReviewCard';
+import { ReviewProblemWorkspace } from './components/ReviewProblemWorkspace';
+import reviewProblemData from './data/review-problems.json';
 import { problems, type LearningProblem } from './data/problems';
 import { compileCode } from './services/compiler';
+import { checkAiConnection, evaluateReviewAnswer } from './services/localAi';
+import { getTodayReviewProblem } from './services/reviewRecommendation';
+import type { AiSettings, ReviewEvaluationResult, ReviewProblem, ReviewProgress, ReviewProgressMap } from './types/review';
 
-type ViewMode = 'home' | 'practice' | 'review';
+type ViewMode = 'home' | 'practice' | 'review' | 'code-review';
 type FeedbackStatus = 'idle' | 'passed' | 'failed' | 'error';
+type ConnectionTone = 'idle' | 'success' | 'error';
 
 interface RunFeedback {
   status: FeedbackStatus;
@@ -63,10 +71,22 @@ interface LearningProfile {
 type ProblemProgressMap = Record<string, ProblemProgress>;
 type PracticeNotesMap = Record<string, string>;
 
+const reviewProblems = reviewProblemData as ReviewProblem[];
+
 const PROGRESS_STORAGE_KEY = 'cpp-learning-progress-v2';
 const PROFILE_STORAGE_KEY = 'cpp-learning-profile-v2';
 const NOTES_STORAGE_KEY = 'cpp-learning-notes-v2';
 const CURRENT_PROBLEM_STORAGE_KEY = 'cpp-current-problem-id-v2';
+const REVIEW_PROGRESS_STORAGE_KEY = 'cpp-review-progress-v1';
+const REVIEW_SETTINGS_STORAGE_KEY = 'cpp-review-ai-settings-v1';
+const CURRENT_REVIEW_PROBLEM_STORAGE_KEY = 'cpp-current-review-problem-id-v1';
+
+const defaultAiSettings: AiSettings = {
+  provider: 'ollama',
+  baseUrl: 'http://localhost:11434',
+  model: 'llama3.1',
+  apiKey: '',
+};
 
 const badgeLabels: Record<string, string> = {
   first_solve: 'はじめての正解',
@@ -97,6 +117,18 @@ const createEmptyProfile = (): LearningProfile => ({
   progressMoments: [],
   earnedBadges: [],
   recentWins: [],
+});
+
+const createEmptyReviewProgress = (): ReviewProgress => ({
+  lastAnswer: '',
+  lastVerdict: null,
+  lastScore: null,
+  lastAnsweredAt: null,
+  firstCorrectAt: null,
+  retryCount: 0,
+  reviewPriority: 0,
+  manualFallbackUsed: false,
+  attempts: 0,
 });
 
 const readStoredProgress = (): ProblemProgressMap => {
@@ -155,6 +187,44 @@ const readStoredNotes = (): PracticeNotesMap => {
   }
 };
 
+const readStoredReviewProgress = (): ReviewProgressMap => {
+  const raw = localStorage.getItem(REVIEW_PROGRESS_STORAGE_KEY);
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as ReviewProgressMap;
+    return Object.fromEntries(
+      Object.entries(parsed).map(([problemId, progress]) => [
+        problemId,
+        {
+          ...createEmptyReviewProgress(),
+          ...progress,
+        },
+      ]),
+    );
+  } catch {
+    return {};
+  }
+};
+
+const readStoredAiSettings = (): AiSettings => {
+  const raw = localStorage.getItem(REVIEW_SETTINGS_STORAGE_KEY);
+  if (!raw) {
+    return defaultAiSettings;
+  }
+
+  try {
+    return {
+      ...defaultAiSettings,
+      ...(JSON.parse(raw) as Partial<AiSettings>),
+    };
+  } catch {
+    return defaultAiSettings;
+  }
+};
+
 const formatDateTime = (value: string | null) => {
   if (!value) {
     return '-';
@@ -188,6 +258,8 @@ const addDays = (date: Date, days: number) => {
 };
 
 const getProgress = (progressMap: ProblemProgressMap, problemId: string) => progressMap[problemId] || createEmptyProblemProgress();
+
+const getReviewProgress = (progressMap: ReviewProgressMap, problemId: string) => progressMap[problemId] || createEmptyReviewProgress();
 
 const getVisibleHintCount = (progress: ProblemProgress, problem: LearningProblem) => {
   const autoCount =
@@ -257,22 +329,34 @@ const chooseBadges = (
 
 function App() {
   const initialProblemId = localStorage.getItem(CURRENT_PROBLEM_STORAGE_KEY) || problems[0]?.id || '';
+  const initialReviewProblemId = localStorage.getItem(CURRENT_REVIEW_PROBLEM_STORAGE_KEY) || reviewProblems[0]?.id || '';
 
   const [viewMode, setViewMode] = useState<ViewMode>('home');
   const [currentProblemId, setCurrentProblemId] = useState(initialProblemId);
+  const [currentReviewProblemId, setCurrentReviewProblemId] = useState(initialReviewProblemId);
   const [progressMap, setProgressMap] = useState<ProblemProgressMap>(() => readStoredProgress());
   const [profile, setProfile] = useState<LearningProfile>(() => readStoredProfile());
   const [practiceNotes, setPracticeNotes] = useState<PracticeNotesMap>(() => readStoredNotes());
+  const [reviewProgressMap, setReviewProgressMap] = useState<ReviewProgressMap>(() => readStoredReviewProgress());
+  const [aiSettings, setAiSettings] = useState<AiSettings>(() => readStoredAiSettings());
   const [code, setCode] = useState('');
+  const [reviewAnswer, setReviewAnswer] = useState('');
   const [isCompiling, setIsCompiling] = useState(false);
+  const [isEvaluatingReview, setIsEvaluatingReview] = useState(false);
   const [feedback, setFeedback] = useState<RunFeedback>({
     status: 'idle',
     headline: '今日の1問を始めましょう',
     body: '小さく直して、すぐ試す流れで十分です。',
   });
   const [showSolution, setShowSolution] = useState(false);
+  const [reviewResult, setReviewResult] = useState<ReviewEvaluationResult | null>(null);
+  const [reviewFallbackMessage, setReviewFallbackMessage] = useState<string | null>(null);
+  const [aiConnectionMessage, setAiConnectionMessage] = useState('Ollama または OpenAI互換API に接続して、レビュー回答を採点できます。');
+  const [aiConnectionTone, setAiConnectionTone] = useState<ConnectionTone>('idle');
+  const reviewProgressRef = useRef(reviewProgressMap);
 
   const problem = problems.find((item) => item.id === currentProblemId) || problems[0];
+  const currentReviewProblem = reviewProblems.find((item) => item.id === currentReviewProblemId) || reviewProblems[0];
 
   useEffect(() => {
     localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressMap));
@@ -285,6 +369,18 @@ function App() {
   useEffect(() => {
     localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(practiceNotes));
   }, [practiceNotes]);
+
+  useEffect(() => {
+    localStorage.setItem(REVIEW_PROGRESS_STORAGE_KEY, JSON.stringify(reviewProgressMap));
+  }, [reviewProgressMap]);
+
+  useEffect(() => {
+    reviewProgressRef.current = reviewProgressMap;
+  }, [reviewProgressMap]);
+
+  useEffect(() => {
+    localStorage.setItem(REVIEW_SETTINGS_STORAGE_KEY, JSON.stringify(aiSettings));
+  }, [aiSettings]);
 
   useEffect(() => {
     if (!problem) {
@@ -310,6 +406,19 @@ function App() {
     localStorage.setItem(`problem-${problem.id}-code`, code);
   }, [code, problem]);
 
+  useEffect(() => {
+    const targetReviewProblem = reviewProblems.find((item) => item.id === currentReviewProblemId);
+    if (!targetReviewProblem) {
+      return;
+    }
+
+    localStorage.setItem(CURRENT_REVIEW_PROBLEM_STORAGE_KEY, targetReviewProblem.id);
+    const currentReviewProgress = getReviewProgress(reviewProgressRef.current, targetReviewProblem.id);
+    setReviewAnswer(currentReviewProgress.lastAnswer);
+    setReviewResult(null);
+    setReviewFallbackMessage(null);
+  }, [currentReviewProblemId]);
+
   const problemSummaries = useMemo(() => {
     return problems.map((item) => {
       const progress = getProgress(progressMap, item.id);
@@ -332,7 +441,13 @@ function App() {
     });
   }, [progressMap]);
 
-  const dueReviews = useMemo(() => problemSummaries.filter((item) => item.dueForReview).sort((a, b) => new Date(a.progress.scheduledReviewAt || 0).getTime() - new Date(b.progress.scheduledReviewAt || 0).getTime()), [problemSummaries]);
+  const dueReviews = useMemo(
+    () =>
+      problemSummaries
+        .filter((item) => item.dueForReview)
+        .sort((a, b) => new Date(a.progress.scheduledReviewAt || 0).getTime() - new Date(b.progress.scheduledReviewAt || 0).getTime()),
+    [problemSummaries],
+  );
 
   const continueProblem = useMemo(
     () =>
@@ -360,11 +475,34 @@ function App() {
     [problemSummaries],
   );
 
-  const visibleHints = problem ? problem.hintSteps.slice(0, getVisibleHintCount(getProgress(progressMap, problem.id), problem)) : [];
-  const currentProgress = problem ? getProgress(progressMap, problem.id) : createEmptyProblemProgress();
-  const practiceAssistMode = currentProgress.attemptsSinceSolved >= 4 ? (problem.starterCode ? 'fill-in-the-blank' : 'guided') : 'normal';
+  const reviewSummaries = useMemo(() => {
+    return reviewProblems.map((item) => {
+      const progress = getReviewProgress(reviewProgressMap, item.id);
+      return {
+        problem: item,
+        progress,
+        isUntouched: progress.attempts === 0,
+        isReadyForRetry:
+          progress.attempts > 0 &&
+          (progress.lastVerdict !== 'correct' ||
+            !progress.lastAnsweredAt ||
+            Date.now() - new Date(progress.lastAnsweredAt).getTime() >= 24 * 60 * 60 * 1000),
+      };
+    });
+  }, [reviewProgressMap]);
+
+  const todayReviewProblem = useMemo(
+    () => getTodayReviewProblem(reviewProblems, reviewProgressMap, new Date()),
+    [reviewProgressMap],
+  );
+
   const solvedProblemsCount = problemSummaries.filter((item) => item.progress.solvedCount > 0).length;
   const weeklyForwardSteps = profile.progressMoments.filter((value) => Date.now() - new Date(value).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
+  const visibleHints = problem ? problem.hintSteps.slice(0, getVisibleHintCount(getProgress(progressMap, problem.id), problem)) : [];
+  const currentProgress = problem ? getProgress(progressMap, problem.id) : createEmptyProblemProgress();
+  const currentReviewProgress = currentReviewProblem ? getReviewProgress(reviewProgressMap, currentReviewProblem.id) : undefined;
+  const showManualFallback = Boolean(reviewFallbackMessage);
+  const practiceAssistMode = currentProgress.attemptsSinceSolved >= 4 ? (problem.starterCode ? 'fill-in-the-blank' : 'guided') : 'normal';
 
   const openProblem = (problemId: string, nextView: ViewMode = 'practice', overrideCode?: string) => {
     const targetProblem = problems.find((item) => item.id === problemId);
@@ -382,6 +520,16 @@ function App() {
     if (overrideCode) {
       localStorage.setItem(`problem-${targetProblem.id}-code`, overrideCode);
     }
+  };
+
+  const openReviewProblem = (problemId: string) => {
+    const targetProblem = reviewProblems.find((item) => item.id === problemId);
+    if (!targetProblem) {
+      return;
+    }
+
+    setCurrentReviewProblemId(problemId);
+    setViewMode('code-review');
   };
 
   const recordActivity = () => {
@@ -432,6 +580,16 @@ function App() {
   const updateProblemProgress = (problemId: string, updater: (current: ProblemProgress) => ProblemProgress) => {
     setProgressMap((current) => {
       const base = current[problemId] || createEmptyProblemProgress();
+      return {
+        ...current,
+        [problemId]: updater(base),
+      };
+    });
+  };
+
+  const updateReviewProgress = (problemId: string, updater: (current: ReviewProgress) => ReviewProgress) => {
+    setReviewProgressMap((current) => {
+      const base = current[problemId] || createEmptyReviewProgress();
       return {
         ...current,
         [problemId]: updater(base),
@@ -613,7 +771,85 @@ function App() {
     });
   };
 
-  if (!problem) {
+  const handleCheckAiConnection = async () => {
+    const result = await checkAiConnection(aiSettings);
+    setAiConnectionMessage(result.message);
+    setAiConnectionTone(result.ok ? 'success' : 'error');
+  };
+
+  const handleEvaluateReview = async () => {
+    if (!currentReviewProblem || reviewAnswer.trim().length === 0) {
+      return;
+    }
+
+    setIsEvaluatingReview(true);
+    setReviewFallbackMessage(null);
+
+    try {
+      const result = await evaluateReviewAnswer(
+        {
+          problemId: currentReviewProblem.id,
+          prompt: currentReviewProblem.prompt,
+          reviewCode: currentReviewProblem.reviewCode,
+          userAnswer: reviewAnswer,
+          rubric: currentReviewProblem.aiRubric,
+        },
+        aiSettings,
+      );
+
+      setReviewResult(result);
+      setAiConnectionMessage('AIで採点できました。回答の抜け漏れも確認できます。');
+      setAiConnectionTone('success');
+      updateReviewProgress(currentReviewProblem.id, (current) => ({
+        ...current,
+        lastAnswer: reviewAnswer,
+        lastVerdict: result.verdict,
+        lastScore: result.score,
+        lastAnsweredAt: new Date().toISOString(),
+        firstCorrectAt: result.verdict === 'correct' && !current.firstCorrectAt ? new Date().toISOString() : current.firstCorrectAt,
+        retryCount: current.lastVerdict && current.lastVerdict !== 'correct' ? current.retryCount + 1 : current.retryCount,
+        reviewPriority: result.verdict === 'correct' ? Math.max(0, current.reviewPriority - 1) : current.reviewPriority + 2,
+        manualFallbackUsed: false,
+        attempts: current.attempts + 1,
+      }));
+      recordActivity();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ローカルAIへの接続に失敗しました。';
+      setReviewResult(null);
+      setReviewFallbackMessage(message);
+      setAiConnectionMessage('AI採点に失敗したため、手動確認モードを表示しています。');
+      setAiConnectionTone('error');
+      updateReviewProgress(currentReviewProblem.id, (current) => ({
+        ...current,
+        lastAnswer: reviewAnswer,
+        lastAnsweredAt: new Date().toISOString(),
+        retryCount: current.retryCount + 1,
+        reviewPriority: current.reviewPriority + 1,
+        manualFallbackUsed: true,
+        attempts: current.attempts + 1,
+      }));
+      recordActivity();
+    } finally {
+      setIsEvaluatingReview(false);
+    }
+  };
+
+  const handleResetReviewAnswer = () => {
+    if (!currentReviewProblem) {
+      return;
+    }
+
+    setReviewAnswer('');
+    setReviewResult(null);
+    setReviewFallbackMessage(null);
+    updateReviewProgress(currentReviewProblem.id, (current) => ({
+      ...current,
+      lastAnswer: '',
+      manualFallbackUsed: false,
+    }));
+  };
+
+  if (!problem || !currentReviewProblem) {
     return null;
   }
 
@@ -641,25 +877,25 @@ function App() {
             <div>
               <p className="text-sm uppercase tracking-[0.25em] text-amber-200/80">Daily Momentum</p>
               <h1 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                毎日10分で、昨日より少し前に進める C++ 学習フローに切り替えました。
+                実装問題とレビュー短問を、毎日少しずつ回せる学習フローです。
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-200/80 sm:text-base">
-                今日は「続きの1問」「復習1問」「気軽な1問」をここから選べます。迷うより先に、まず1回コードを動かせる導線を優先しています。
+                今日は「続きの1問」「日次レビュー1問」「復習1問」をここから始められます。コードを書く日と、読む日を自然に混ぜられるようにしました。
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   onClick={() => recommendedProblem && openProblem(recommendedProblem.problem.id)}
                   className="inline-flex items-center gap-2 rounded-full bg-amber-300 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-amber-200"
                 >
-                  今日の1問を始める
+                  今日の実装問題
                   <ChevronRight className="h-4 w-4" />
                 </button>
                 <button
-                  onClick={() => setViewMode('review')}
+                  onClick={() => todayReviewProblem && openReviewProblem(todayReviewProblem.id)}
                   className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
                 >
-                  復習を見る
-                  <CalendarClock className="h-4 w-4" />
+                  今日のレビュー1問
+                  <MessageSquareCode className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -678,7 +914,7 @@ function App() {
           </div>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-3">
+        <section className="grid gap-4 xl:grid-cols-4">
           <button
             onClick={() => recommendedProblem && openProblem(recommendedProblem.problem.id)}
             className="rounded-[24px] border border-white/10 bg-white/5 p-5 text-left transition hover:border-amber-300/40 hover:bg-white/10"
@@ -697,6 +933,12 @@ function App() {
             </div>
           </button>
 
+          <DailyReviewCard
+            problem={todayReviewProblem}
+            progress={todayReviewProblem ? getReviewProgress(reviewProgressMap, todayReviewProblem.id) : undefined}
+            onOpen={openReviewProblem}
+          />
+
           <button
             onClick={() => (dueReviews[0] ? openProblem(dueReviews[0].problem.id, 'review') : setViewMode('review'))}
             className="rounded-[24px] border border-white/10 bg-white/5 p-5 text-left transition hover:border-sky-300/40 hover:bg-white/10"
@@ -710,7 +952,7 @@ function App() {
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-300">
               {dueReviews[0]
-                ? `前回の正解から少し時間を空けたので、今やり直すと定着しやすいタイミングです。`
+                ? '前回の正解から少し時間を空けたので、今やり直すと定着しやすいタイミングです。'
                 : '今日の学習を終えると、ここに次回の復習候補が並ぶようになります。'}
             </p>
             <div className="mt-4 text-xs text-slate-300/80">
@@ -776,43 +1018,34 @@ function App() {
           <div className="rounded-[24px] border border-white/10 bg-slate-950/50 p-5">
             <div className="flex items-center gap-2 text-white">
               <Medal className="h-5 w-5 text-sky-200" />
-              <h2 className="text-lg font-semibold">集まったバッジ</h2>
+              <h2 className="text-lg font-semibold">レビュー短問ライブラリ</h2>
             </div>
-            <div className="mt-4 flex flex-wrap gap-3">
-              {profile.earnedBadges.length === 0 && (
-                <div className="rounded-2xl border border-dashed border-white/10 px-4 py-5 text-sm text-slate-300">
-                  最初の正解や復習完了で、ここに小さな達成が増えていきます。
-                </div>
-              )}
-              {profile.earnedBadges.map((badgeId) => (
-                <div key={badgeId} className="rounded-full border border-sky-300/20 bg-sky-300/10 px-4 py-2 text-sm text-sky-100">
-                  {badgeLabels[badgeId]}
-                </div>
+            <div className="mt-4 space-y-2">
+              {reviewSummaries.slice(0, 5).map((item) => (
+                <button
+                  key={item.problem.id}
+                  onClick={() => openReviewProblem(item.problem.id)}
+                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
+                >
+                  <div>
+                    <p className="font-medium text-white">{item.problem.title}</p>
+                    <p className="mt-1 text-xs text-slate-300">
+                      {item.problem.estimatedMinutes}分 / {item.progress.lastVerdict || '未挑戦'}
+                    </p>
+                  </div>
+                  <span className="text-xs text-slate-300">
+                    {item.isReadyForRetry ? '復習向き' : item.isUntouched ? '新規' : '学習済み'}
+                  </span>
+                </button>
               ))}
             </div>
-
-            <div className="mt-6 border-t border-white/10 pt-4">
-              <h3 className="text-sm font-medium text-slate-200">全問題ライブラリ</h3>
-              <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
-                {problemSummaries.map((item) => (
-                  <button
-                    key={item.problem.id}
-                    onClick={() => openProblem(item.problem.id)}
-                    className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
-                  >
-                    <div>
-                      <p className="font-medium text-white">{item.problem.title}</p>
-                      <p className="mt-1 text-xs text-slate-300">
-                        {item.problem.category} / 難易度 {item.problem.difficulty}
-                      </p>
-                    </div>
-                    <span className="text-xs text-slate-300">
-                      {item.progress.solvedCount > 0 ? '学習済み' : item.progress.runCount > 0 ? '途中' : '未着手'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <button
+              onClick={() => setViewMode('code-review')}
+              className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
+            >
+              専用タブで見る
+              <ChevronRight className="h-4 w-4" />
+            </button>
           </div>
         </section>
       </div>
@@ -954,7 +1187,7 @@ function App() {
             {visibleHints.length > 0 && (
               <div className="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
                 <div className="flex items-center gap-2 text-amber-100">
-                  <Lightbulb className="h-4 w-4" />
+                  <Sparkles className="h-4 w-4" />
                   <p className="text-sm font-medium">段階ヒント</p>
                 </div>
                 <div className="mt-3 space-y-2">
@@ -1088,6 +1321,70 @@ function App() {
     </main>
   );
 
+  const CodeReviewView = (
+    <main className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+        <AiSettingsPanel
+          settings={aiSettings}
+          onChange={setAiSettings}
+          onCheckConnection={handleCheckAiConnection}
+          statusMessage={aiConnectionMessage}
+          statusTone={aiConnectionTone}
+        />
+
+        <section className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="rounded-[24px] border border-white/10 bg-slate-950/60 p-5">
+            <div className="flex items-center gap-2 text-white">
+              <MessageSquareCode className="h-5 w-5 text-rose-200" />
+              <h2 className="text-lg font-semibold">レビュー問題一覧</h2>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              日次おすすめも一覧もここから確認できます。未挑戦と復習候補を混ぜて選べます。
+            </p>
+            <div className="mt-4 space-y-2">
+              {reviewSummaries.map((item) => (
+                <button
+                  key={item.problem.id}
+                  onClick={() => openReviewProblem(item.problem.id)}
+                  className={`w-full rounded-2xl border p-4 text-left transition ${
+                    item.problem.id === currentReviewProblem.id
+                      ? 'border-rose-300/40 bg-rose-300/10'
+                      : 'border-white/10 bg-white/5 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{item.problem.title}</p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        {item.problem.estimatedMinutes}分 / {item.progress.lastVerdict || '未挑戦'}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-white/10 px-2 py-1 text-[10px] text-slate-200">
+                      {item.isReadyForRetry ? '復習' : item.isUntouched ? '新規' : '済'}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <ReviewProblemWorkspace
+            problem={currentReviewProblem}
+            answer={reviewAnswer}
+            onAnswerChange={setReviewAnswer}
+            onEvaluate={handleEvaluateReview}
+            onResetAnswer={handleResetReviewAnswer}
+            result={reviewResult}
+            progress={currentReviewProgress}
+            isEvaluating={isEvaluatingReview}
+            fallbackMessage={reviewFallbackMessage}
+            showManualFallback={showManualFallback}
+          />
+        </section>
+      </div>
+    </main>
+  );
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.08),_transparent_25%),linear-gradient(180deg,_#07111f,_#081421_32%,_#09131d)] text-white">
       <header className="border-b border-white/10 bg-slate-950/50 backdrop-blur">
@@ -1131,6 +1428,15 @@ function App() {
                   Review
                 </span>
               </button>
+              <button
+                onClick={() => setViewMode('code-review')}
+                className={`rounded-full px-4 py-2 text-sm transition ${viewMode === 'code-review' ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:bg-white/10'}`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <MessageSquareCode className="h-4 w-4" />
+                  Code Review
+                </span>
+              </button>
             </div>
 
             <select
@@ -1148,7 +1454,7 @@ function App() {
         </div>
       </header>
 
-      {viewMode === 'home' ? HomeView : viewMode === 'review' ? ReviewView : PracticeView}
+      {viewMode === 'home' ? HomeView : viewMode === 'review' ? ReviewView : viewMode === 'code-review' ? CodeReviewView : PracticeView}
     </div>
   );
 }

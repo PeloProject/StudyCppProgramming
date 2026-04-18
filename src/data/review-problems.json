@@ -1,0 +1,366 @@
+[
+  {
+    "id": "null-check-after-deref",
+    "title": "1. ポインタ引数の扱いを見直す",
+    "category": "Code Review",
+    "estimatedMinutes": 4,
+    "difficulty": 1,
+    "tags": ["pointer", "bug", "safety", "新人採用必須", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "このコードでレビュー指摘すべき問題と、どう直すべきかを文章で説明してください。",
+    "reviewCode": "#include <iostream>\n\nvoid printLength(const char* text) {\n    std::cout << text[0] << std::endl;\n\n    if (text == nullptr) {\n        std::cout << \"empty\" << std::endl;\n        return;\n    }\n\n    std::cout << \"done\" << std::endl;\n}\n",
+    "expectedPoints": [
+      "nullptr チェックより先に text[0] を読んでいて未定義動作になる",
+      "null チェックは参照より前に行う必要がある",
+      "必要なら null のときの早期 return にする"
+    ],
+    "sampleAnswer": "このコードは `text == nullptr` の確認より先に `text[0]` を参照しているため、null が渡されたときに未定義動作になります。まず null を確認し、null の場合は早期 return してから文字参照する形に直すべきです。",
+    "aiRubric": {
+      "requiredPoints": [
+        "null チェック前に text を参照している危険",
+        "未定義動作またはクラッシュの可能性",
+        "チェック順を入れ替える修正方針"
+      ],
+      "bonusPoints": [
+        "早期 return の提案",
+        "引数バリデーションを関数冒頭へ寄せる提案"
+      ],
+      "antiPatterns": [
+        "null チェックだけを指摘して参照順に触れない",
+        "単なる style 指摘で終える"
+      ]
+    },
+    "manualFallback": [
+      "参照より前に検証できているか確認する",
+      "不正な入力で落ちない説明になっているか確認する",
+      "修正方針が『順番を入れ替える』まで書けているか確認する"
+    ]
+  },
+  {
+    "id": "missing-virtual-destructor",
+    "title": "2. 継承設計の後始末を確認する",
+    "category": "Code Review",
+    "estimatedMinutes": 5,
+    "difficulty": 2,
+    "tags": ["oop", "destructor", "resource", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "コードレビューでこの設計上の問題をどう説明し、どの修正を提案するかを書いてください。",
+    "reviewCode": "#include <iostream>\n\nclass Logger {\npublic:\n    ~Logger() {\n        std::cout << \"Logger destroyed\" << std::endl;\n    }\n\n    virtual void write() const {\n        std::cout << \"write\" << std::endl;\n    }\n};\n\nclass FileLogger : public Logger {\npublic:\n    ~FileLogger() {\n        std::cout << \"FileLogger destroyed\" << std::endl;\n    }\n};\n",
+    "expectedPoints": [
+      "ポリモーフィックに使う基底クラスなのに virtual デストラクタがない",
+      "基底ポインタ経由 delete で派生側デストラクタが正しく呼ばれない",
+      "基底クラスのデストラクタを virtual にする"
+    ],
+    "sampleAnswer": "`Logger` は virtual 関数を持つため基底クラスとして使われる前提ですが、デストラクタが virtual ではありません。この状態で `Logger*` 経由で `FileLogger` を delete すると派生クラスの破棄が正しく行われない可能性があります。`virtual ~Logger() = default;` などに修正するのが適切です。",
+    "aiRubric": {
+      "requiredPoints": [
+        "基底クラスに virtual デストラクタが必要",
+        "基底ポインタ経由 delete の危険",
+        "virtual 化する修正提案"
+      ],
+      "bonusPoints": [
+        "virtual 関数を持つ型であることへの言及",
+        "default 指定の提案"
+      ],
+      "antiPatterns": [
+        "メモリリークと言い切るだけで理由が薄い",
+        "派生クラスだけ直す提案"
+      ]
+    },
+    "manualFallback": [
+      "基底ポインタ経由 delete の危険を説明できているか",
+      "修正が `Logger` 側に入っているか",
+      "単なる style ではなく挙動の問題として書けているか"
+    ]
+  },
+  {
+    "id": "copy-heavy-loop",
+    "title": "3. ループ中の値の受け取り方を見直す",
+    "category": "Code Review",
+    "estimatedMinutes": 3,
+    "difficulty": 1,
+    "tags": ["performance", "const-reference", "loop", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "このコードでレビュー観点として何を指摘し、どんな修正が適切かを書いてください。",
+    "reviewCode": "#include <string>\n#include <vector>\n\nvoid printNames(const std::vector<std::string>& names) {\n    for (auto name : names) {\n        if (!name.empty()) {\n            // print\n        }\n    }\n}\n",
+    "expectedPoints": [
+      "auto name で各要素をコピーしている",
+      "読み取りだけなら const auto& を使う方がよい",
+      "不要なコピーを避けて効率を上げられる"
+    ],
+    "sampleAnswer": "この `for (auto name : names)` は各文字列を毎回コピーしています。ここでは読み取りしかしないので、`for (const auto& name : names)` にして不要なコピーを避けるのがよいです。",
+    "aiRubric": {
+      "requiredPoints": [
+        "range-for でコピーしていること",
+        "const 参照の提案"
+      ],
+      "bonusPoints": [
+        "string のコピーコストへの言及",
+        "読み取り専用である点への言及"
+      ],
+      "antiPatterns": [
+        "バグ扱いしすぎる",
+        "const を付ける理由が説明されない"
+      ]
+    },
+    "manualFallback": [
+      "コピーが起きていることを説明できているか",
+      "修正案が `const auto&` になっているか"
+    ]
+  },
+  {
+    "id": "const-missing-member",
+    "title": "4. メンバ関数の責務を宣言に反映する",
+    "category": "Code Review",
+    "estimatedMinutes": 4,
+    "difficulty": 1,
+    "tags": ["const-correctness", "api-design", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "レビューコメントとして、何が問題でどう直すべきかを日本語で説明してください。",
+    "reviewCode": "#include <string>\n\nclass User {\npublic:\n    User(std::string name) : name_(std::move(name)) {}\n\n    std::string getName() {\n        return name_;\n    }\n\nprivate:\n    std::string name_;\n};\n",
+    "expectedPoints": [
+      "状態を変更しない getter は const にできる",
+      "const オブジェクトから呼べず API の使い勝手が落ちる",
+      "`std::string getName() const` などへ修正する"
+    ],
+    "sampleAnswer": "`getName` はメンバ状態を変更しないので `const` メンバ関数にするべきです。今のままだと `const User` から呼べず、const-correctness が崩れます。`std::string getName() const` に修正するのが自然です。",
+    "aiRubric": {
+      "requiredPoints": [
+        "getter が状態変更しないこと",
+        "const メンバ関数にすべきこと",
+        "const オブジェクトから呼べない問題"
+      ],
+      "bonusPoints": [
+        "API 契約の明確化",
+        "戻り値参照化ではなくまず const correctness を優先"
+      ],
+      "antiPatterns": [
+        "const を style の話だけで片付ける"
+      ]
+    },
+    "manualFallback": [
+      "『変更しない関数』と説明できているか",
+      "const オブジェクトから呼べない点を書けているか"
+    ]
+  },
+  {
+    "id": "return-reference-to-local",
+    "title": "5. 戻り値の寿命を確認する",
+    "category": "Code Review",
+    "estimatedMinutes": 5,
+    "difficulty": 2,
+    "tags": ["lifetime", "reference", "bug", "新人採用必須", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "このコードに対するレビューコメントとして、危険な点と修正案を説明してください。",
+    "reviewCode": "#include <string>\n\nconst std::string& makeLabel() {\n    std::string label = \"cpp\";\n    return label;\n}\n",
+    "expectedPoints": [
+      "ローカル変数は関数終了時に破棄される",
+      "破棄済みオブジェクトへの参照を返してしまう",
+      "値で返すように変更する"
+    ],
+    "sampleAnswer": "ローカル変数 `label` は関数終了時に破棄されるため、その参照を返すのは危険です。呼び出し側ではダングリング参照になります。`std::string makeLabel()` のように値で返す形へ直すべきです。",
+    "aiRubric": {
+      "requiredPoints": [
+        "ローカル変数の寿命切れ",
+        "ダングリング参照",
+        "値返しへの修正"
+      ],
+      "bonusPoints": [
+        "NRVO や move により値返しでも実用上問題ないことへの言及"
+      ],
+      "antiPatterns": [
+        "static にすればよいとだけ書く",
+        "参照返し自体を全面否定する"
+      ]
+    },
+    "manualFallback": [
+      "寿命の話が入っているか",
+      "ダングリング参照という結果まで説明できているか",
+      "修正案が値返しになっているか"
+    ]
+  },
+  {
+    "id": "unchecked-vector-access",
+    "title": "6. 添字アクセスの前提を確認する",
+    "category": "Code Review",
+    "estimatedMinutes": 4,
+    "difficulty": 1,
+    "tags": ["container", "bounds", "safety", "新人採用必須", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "このコードに対して、どういう入力で危険になり、どの修正が必要かをレビューコメントとして説明してください。",
+    "reviewCode": "#include <vector>\n\nint firstScore(const std::vector<int>& scores) {\n    return scores[0];\n}\n",
+    "expectedPoints": [
+      "空配列のとき scores[0] が不正アクセスになる",
+      "入力前提を確認せず添字アクセスしているのが問題",
+      "empty チェックや仕様上の前提確認が必要"
+    ],
+    "sampleAnswer": "このコードは `scores` が空のときに `scores[0]` を読んでしまい、不正アクセスになります。空でないことが保証されないなら、先に `empty()` を確認するか、呼び出し契約を明確にしたうえで安全に扱うべきです。",
+    "aiRubric": {
+      "requiredPoints": [
+        "空 vector で危険になること",
+        "添字アクセス前のチェック不足",
+        "empty チェックまたは前提明確化の修正案"
+      ],
+      "bonusPoints": [
+        "例外や戻り値設計まで触れる",
+        "at() との違いに触れる"
+      ],
+      "antiPatterns": [
+        "サイズ0ケースに触れない",
+        "単に at() に変えるだけで前提を説明しない"
+      ]
+    },
+    "manualFallback": [
+      "空の入力で何が起きるか書けているか",
+      "危険な理由が『範囲外アクセス』まで説明できているか",
+      "修正案が入力確認まで含んでいるか"
+    ]
+  },
+  {
+    "id": "missing-open-check",
+    "title": "7. 失敗パスを見落としていないか確認する",
+    "category": "Code Review",
+    "estimatedMinutes": 5,
+    "difficulty": 1,
+    "tags": ["io", "error-handling", "新人採用必須", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "実務レビューを想定して、このコードの危険な点と必要な修正を説明してください。",
+    "reviewCode": "#include <fstream>\n#include <string>\n\nstd::string loadConfig() {\n    std::ifstream file(\"config.txt\");\n    std::string line;\n    std::getline(file, line);\n    return line;\n}\n",
+    "expectedPoints": [
+      "ファイルオープン失敗を確認していない",
+      "読み込み失敗時の扱いが不明確",
+      "open / getline の結果確認と失敗時の処理が必要"
+    ],
+    "sampleAnswer": "このコードは `config.txt` が開けなかった場合や `getline` に失敗した場合を確認していません。そのまま空文字を返して異常を見逃す可能性があります。ファイルが開けたか、読み込みに成功したかをチェックし、失敗時はエラーを返すか例外にするなど方針を明確にすべきです。",
+    "aiRubric": {
+      "requiredPoints": [
+        "ファイルオープン失敗の未確認",
+        "読み込み失敗の未確認",
+        "失敗時処理を追加する修正方針"
+      ],
+      "bonusPoints": [
+        "空文字とエラーの区別に触れる",
+        "ログや呼び出し側通知の必要性に触れる"
+      ],
+      "antiPatterns": [
+        "ファイルが存在する前提で済ませる",
+        "失敗時の影響を書かない"
+      ]
+    },
+    "manualFallback": [
+      "open 失敗と getline 失敗の両方に触れているか",
+      "エラーを握りつぶす危険が説明できているか",
+      "修正案がチェック追加で終わらず失敗時方針まで書けているか"
+    ]
+  },
+  {
+    "id": "raw-new-leak",
+    "title": "8. 所有権の持ち方を見直す",
+    "category": "Code Review",
+    "estimatedMinutes": 5,
+    "difficulty": 2,
+    "tags": ["memory", "ownership", "resource", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "コードレビューとして、この実装の問題点と修正方針を説明してください。",
+    "reviewCode": "#include <string>\n\nstruct User {\n    std::string name;\n};\n\nUser* createUser() {\n    User* user = new User();\n    user->name = \"guest\";\n    return user;\n}\n",
+    "expectedPoints": [
+      "raw new による所有権が曖昧で解放漏れを招きやすい",
+      "呼び出し側責務が不明確でメモリ管理事故につながる",
+      "値返しや smart pointer の利用を検討すべき"
+    ],
+    "sampleAnswer": "このコードは `new` で確保した `User` を生ポインタで返しており、誰が delete するのかが分かりにくくなっています。解放漏れや所有権の混乱につながるため、まずは `User` を値で返すか、動的確保が必要なら `std::unique_ptr<User>` にして所有権を明確にするべきです。",
+    "aiRubric": {
+      "requiredPoints": [
+        "raw new の所有権が曖昧",
+        "解放漏れや管理事故の危険",
+        "値返しまたは smart pointer への修正"
+      ],
+      "bonusPoints": [
+        "このケースでは値返しで十分なことへの言及",
+        "unique_ptr による所有権表現への言及"
+      ],
+      "antiPatterns": [
+        "delete を呼べばよいだけで終える",
+        "raw pointer 自体を全面禁止として雑に片付ける"
+      ]
+    },
+    "manualFallback": [
+      "誰が解放するのか不明な点を書けているか",
+      "所有権の明確化まで修正案に入っているか",
+      "smart pointer か値返しの提案になっているか"
+    ]
+  },
+  {
+    "id": "signed-unsigned-loop",
+    "title": "9. ループ条件の型の噛み合わせを確認する",
+    "category": "Code Review",
+    "estimatedMinutes": 4,
+    "difficulty": 2,
+    "tags": ["loop", "type", "warning", "案件の基本"],
+    "dailyEligible": true,
+    "prompt": "このコードで見逃したくないレビュー観点と、どのように直すべきかを説明してください。",
+    "reviewCode": "#include <vector>\n\nbool hasZero(const std::vector<int>& values) {\n    for (int i = 0; i < values.size(); ++i) {\n        if (values[i] == 0) {\n            return true;\n        }\n    }\n    return false;\n}\n",
+    "expectedPoints": [
+      "int と size() の型が一致せず signed/unsigned 警告の原因になる",
+      "大きいサイズでは比較や変換が不自然になる",
+      "size_t を使うか range-for を使う方がよい"
+    ],
+    "sampleAnswer": "`values.size()` は符号なし型なのに、ループ変数が `int` になっています。signed/unsigned の比較警告や不自然な型変換につながるため、`std::size_t i = 0;` にするか、添字が不要なら range-for に直すのがよいです。",
+    "aiRubric": {
+      "requiredPoints": [
+        "signed/unsigned の不一致",
+        "警告や比較上の不自然さ",
+        "size_t または range-for への修正"
+      ],
+      "bonusPoints": [
+        "添字不要なら range-for が読みやすい点",
+        "大きいサイズ時の安全性に触れる"
+      ],
+      "antiPatterns": [
+        "単なる style 指摘で終わる",
+        "values.size() を int に cast すればよいだけにする"
+      ]
+    },
+    "manualFallback": [
+      "型の不一致を書けているか",
+      "警告だけでなく修正方針も書けているか",
+      "range-for という選択肢も見えているか"
+    ]
+  },
+  {
+    "id": "missing-const-reference-param",
+    "title": "10. 引数の受け取り方を見直す",
+    "category": "Code Review",
+    "estimatedMinutes": 4,
+    "difficulty": 1,
+    "tags": ["parameter", "performance", "api-design", "新人採用必須"],
+    "dailyEligible": true,
+    "prompt": "新人採用レビューを意識して、このコードで気になる点と修正案を説明してください。",
+    "reviewCode": "#include <string>\n\nbool isAdmin(std::string role) {\n    return role == \"admin\";\n}\n",
+    "expectedPoints": [
+      "読み取り専用の std::string を値渡しして不要なコピーが起きる",
+      "const std::string& などで受ける方が自然",
+      "小さな関数でも引数設計の基本が見える"
+    ],
+    "sampleAnswer": "この関数は `role` を変更しないのに値渡ししているため、不要なコピーが発生します。`const std::string& role` で受ければ意図も明確で無駄なコピーも避けられます。小さな関数でも、読み取り専用なら参照渡しを選べるかは基本的なレビュー観点です。",
+    "aiRubric": {
+      "requiredPoints": [
+        "不要な値コピー",
+        "const 参照で受ける提案"
+      ],
+      "bonusPoints": [
+        "読み取り専用である点への言及",
+        "関数インターフェース設計の基本への言及"
+      ],
+      "antiPatterns": [
+        "常に参照渡しが正義という書き方",
+        "変更されない点に触れない"
+      ]
+    },
+    "manualFallback": [
+      "コピーの話が入っているか",
+      "const 参照にする理由を書けているか",
+      "読み取り専用である前提に触れているか"
+    ]
+  }
+]
